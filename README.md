@@ -8,7 +8,7 @@ HA Input Bridge adds a sidebar trackpad panel to Home Assistant and exposes serv
 
 Experimental.
 
-This project is currently usable for testing. The Home Assistant integration, bundled sidebar trackpad, and services work. The Windows bridge currently requires manual setup. A Windows installer is planned.
+The Home Assistant integration, bundled sidebar trackpad, and services are currently usable for testing. The Windows bridge currently requires manual setup. A Windows installer is planned.
 
 ## What this project includes
 
@@ -54,7 +54,7 @@ Home Assistant sidebar
 - Windows PC
 - Python on the Windows PC
 - Network access from Home Assistant to the Windows PC
-- A shared secret token
+- Shared secret token
 - Windows bridge agent running on the target PC
 
 ## Installation through HACS
@@ -84,11 +84,22 @@ The setup flow asks for:
 Example:
 
 ```text
-Name: MAZBAC PC
-Host: 192.168.2.2
+Name: My Windows PC
+Host: <WINDOWS_PC_IP_OR_HOSTNAME>
 Port: 8765
-Token: your-generated-token
+Token: <BRIDGE_TOKEN>
 ```
+
+Example using a generic private LAN address:
+
+```text
+Name: Office PC
+Host: 192.168.1.50
+Port: 8765
+Token: <BRIDGE_TOKEN>
+```
+
+Do not publish your real token.
 
 ## Sidebar panel
 
@@ -238,24 +249,24 @@ C:\ha-input-bridge\
 Expected Windows bridge settings:
 
 ```text
-Host: Windows PC LAN IP
+Host: <WINDOWS_PC_IP_OR_HOSTNAME>
 Port: 8765
-Token: shared secret
-Allowed client IP: Home Assistant IP
+Token: <BRIDGE_TOKEN>
+Allowed client IP: <HOME_ASSISTANT_IP>
 ```
 
 The bridge should listen on the Windows PC address, for example:
 
 ```text
-192.168.2.2:8765
+<WINDOWS_PC_IP>:8765
 ```
 
 The Home Assistant integration should then be configured with:
 
 ```text
-Host: 192.168.2.2
+Host: <WINDOWS_PC_IP_OR_HOSTNAME>
 Port: 8765
-Token: same shared secret
+Token: <BRIDGE_TOKEN>
 ```
 
 ## Security warning
@@ -271,6 +282,8 @@ Recommended safeguards:
 - Restrict Windows Firewall to the Home Assistant IP.
 - Keep the arm-before-input safety model enabled.
 - Do not log typed text.
+- Do not publish your token.
+- Do not publish your personal network details in issues.
 - Do not use this on shared or untrusted networks.
 - Do not port-forward this bridge.
 - Do not expose it through a public reverse proxy.
@@ -283,13 +296,15 @@ Other clients → blocked by firewall or rejected by allowlist
 Internet → no access
 ```
 
-Example:
+Generic example:
 
 ```text
-Windows PC:       192.168.2.2
-Home Assistant:   192.168.2.13
+Windows PC:       192.168.1.50
+Home Assistant:   192.168.1.10
 Bridge port:      8765
 ```
+
+These are example addresses only.
 
 ## Development roadmap
 
@@ -354,6 +369,18 @@ Scheduled task check:
 ```powershell
 Get-ScheduledTask -TaskName "HA Input Bridge" | Select-Object TaskName, State
 ```
+
+Listening port check:
+
+```powershell
+Get-NetTCPConnection -LocalPort 8765 -State Listen
+```
+
+## Privacy note
+
+Avoid posting real tokens, public IP addresses, private hostnames, usernames, screenshots with secrets, or full logs containing sensitive values in public GitHub issues.
+
+Private LAN IPs such as `192.168.x.x`, `10.x.x.x`, and `172.16.x.x` are not directly reachable from the public internet, but they can still reveal details about your local setup. Use placeholders when reporting issues.
 
 ## License
 
