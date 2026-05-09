@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import voluptuous as vol
 
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PORT, CONF_TOKEN
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
@@ -27,6 +29,9 @@ SERVICE_SCROLL = "scroll"
 SERVICE_WRITE = "write"
 SERVICE_PRESS = "press"
 SERVICE_HOTKEY = "hotkey"
+
+CARD_URL_PATH = "/ha_input_bridge/pc-trackpad-card.js"
+CARD_FILE = Path(__file__).parent / "www" / "pc-trackpad-card.js"
 
 
 SERVICE_ARM_SCHEMA = vol.Schema(
@@ -98,8 +103,18 @@ SERVICE_HOTKEY_SCHEMA = vol.Schema(
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Set up HA Input Bridge services."""
+    """Set up HA Input Bridge services and bundled frontend card."""
     hass.data.setdefault(DOMAIN, {})
+
+    await hass.http.async_register_static_paths(
+        [
+            StaticPathConfig(
+                CARD_URL_PATH,
+                str(CARD_FILE),
+                True,
+            )
+        ]
+    )
 
     async def get_client() -> HAInputBridgeClient:
         """Return the first loaded bridge client."""
