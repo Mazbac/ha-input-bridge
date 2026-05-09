@@ -27,5 +27,107 @@
     "abort": {
       "already_configured": "This HA Input Bridge instance is already configured."
     }
+  },
+  "services": {
+    "arm": {
+      "name": "Arm bridge",
+      "description": "Temporarily arm the bridge so input commands are accepted.",
+      "fields": {
+        "seconds": {
+          "name": "Seconds",
+          "description": "How long the bridge should stay armed."
+        }
+      }
+    },
+    "position": {
+      "name": "Get mouse position",
+      "description": "Return the current mouse position and screen size."
+    },
+    "move": {
+      "name": "Move mouse",
+      "description": "Move the mouse to absolute screen coordinates.",
+      "fields": {
+        "x": {
+          "name": "X coordinate",
+          "description": "Horizontal screen coordinate."
+        },
+        "y": {
+          "name": "Y coordinate",
+          "description": "Vertical screen coordinate."
+        }
+      }
+    },
+    "move_relative": {
+      "name": "Move mouse relative",
+      "description": "Move the mouse relative to its current position.",
+      "fields": {
+        "dx": {
+          "name": "Delta X",
+          "description": "Horizontal movement in pixels."
+        },
+        "dy": {
+          "name": "Delta Y",
+          "description": "Vertical movement in pixels."
+        }
+      }
+    },
+    "click": {
+      "name": "Click mouse",
+      "description": "Click at the current mouse position.",
+      "fields": {
+        "button": {
+          "name": "Button",
+          "description": "Mouse button to click."
+        },
+        "clicks": {
+          "name": "Clicks",
+          "description": "Number of clicks."
+        }
+      }
+    },
+    "scroll": {
+      "name": "Scroll mouse wheel",
+      "description": "Scroll at the current mouse position.",
+      "fields": {
+        "amount": {
+          "name": "Amount",
+          "description": "Positive values scroll up; negative values scroll down."
+        }
+      }
+    },
+    "write": {
+      "name": "Write text",
+      "description": "Type text into the active window.",
+      "fields": {
+        "text": {
+          "name": "Text",
+          "description": "Text to type."
+        },
+        "interval": {
+          "name": "Interval",
+          "description": "Delay between keystrokes in seconds."
+        }
+      }
+    },
+    "press": {
+      "name": "Press key",
+      "description": "Press a keyboard key.",
+      "fields": {
+        "key": {
+          "name": "Key",
+          "description": "Keyboard key to press."
+        }
+      }
+    },
+    "hotkey": {
+      "name": "Press hotkey",
+      "description": "Press a keyboard shortcut.",
+      "fields": {
+        "keys": {
+          "name": "Keys",
+          "description": "List of keys to press together, such as ctrl and l."
+        }
+      }
+    }
   }
 }
