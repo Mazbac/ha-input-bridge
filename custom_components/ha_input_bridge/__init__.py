@@ -7,10 +7,7 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.components.frontend import (
-    add_extra_js_url,
-    async_register_built_in_panel,
-)
+from homeassistant.components.frontend import async_register_built_in_panel
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PORT, CONF_TOKEN
@@ -54,21 +51,35 @@ SERVICE_POSITION_SCHEMA = vol.Schema({})
 
 SERVICE_MOVE_SCHEMA = vol.Schema(
     {
-        vol.Required("x"): vol.All(vol.Coerce(int), vol.Range(min=0, max=10000)),
-        vol.Required("y"): vol.All(vol.Coerce(int), vol.Range(min=0, max=10000)),
+        vol.Required("x"): vol.All(
+            vol.Coerce(int),
+            vol.Range(min=0, max=10000),
+        ),
+        vol.Required("y"): vol.All(
+            vol.Coerce(int),
+            vol.Range(min=0, max=10000),
+        ),
     }
 )
 
 SERVICE_MOVE_RELATIVE_SCHEMA = vol.Schema(
     {
-        vol.Required("dx"): vol.All(vol.Coerce(int), vol.Range(min=-300, max=300)),
-        vol.Required("dy"): vol.All(vol.Coerce(int), vol.Range(min=-300, max=300)),
+        vol.Required("dx"): vol.All(
+            vol.Coerce(int),
+            vol.Range(min=-300, max=300),
+        ),
+        vol.Required("dy"): vol.All(
+            vol.Coerce(int),
+            vol.Range(min=-300, max=300),
+        ),
     }
 )
 
 SERVICE_CLICK_SCHEMA = vol.Schema(
     {
-        vol.Optional("button", default="left"): vol.In(["left", "right", "middle"]),
+        vol.Optional("button", default="left"): vol.In(
+            ["left", "right", "middle"]
+        ),
         vol.Optional("clicks", default=1): vol.All(
             vol.Coerce(int),
             vol.Range(min=1, max=3),
@@ -78,7 +89,10 @@ SERVICE_CLICK_SCHEMA = vol.Schema(
 
 SERVICE_SCROLL_SCHEMA = vol.Schema(
     {
-        vol.Required("amount"): vol.All(vol.Coerce(int), vol.Range(min=-80, max=80)),
+        vol.Required("amount"): vol.All(
+            vol.Coerce(int),
+            vol.Range(min=-80, max=80),
+        ),
     }
 )
 
@@ -128,17 +142,23 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         ]
     )
 
-    add_extra_js_url(hass, PANEL_URL_PATH)
-
     async_register_built_in_panel(
         hass,
-        component_name="ha-input-bridge-panel",
+        component_name="custom",
         sidebar_title="PC Trackpad",
         sidebar_icon="mdi:gesture-tap",
         sidebar_default_visible=True,
         frontend_url_path="pc-trackpad",
         require_admin=False,
         update=True,
+        config={
+            "_panel_custom": {
+                "name": "ha-input-bridge-panel",
+                "embed_iframe": False,
+                "trust_external": False,
+                "module_url": PANEL_URL_PATH,
+            }
+        },
     )
 
     async def get_client() -> HAInputBridgeClient:
@@ -146,13 +166,17 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         entries = hass.data.get(DOMAIN, {})
 
         if not entries:
-            raise ServiceValidationError("No HA Input Bridge instance is configured")
+            raise ServiceValidationError(
+                "No HA Input Bridge instance is configured"
+            )
 
         first_entry = next(iter(entries.values()))
         client = first_entry.get("client")
 
         if client is None:
-            raise ServiceValidationError("HA Input Bridge instance is not loaded")
+            raise ServiceValidationError(
+                "HA Input Bridge instance is not loaded"
+            )
 
         return client
 
@@ -184,11 +208,19 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     async def handle_move_relative(call: ServiceCall) -> None:
         """Handle relative mouse move service."""
-        await call_bridge("move_relative", call.data["dx"], call.data["dy"])
+        await call_bridge(
+            "move_relative",
+            call.data["dx"],
+            call.data["dy"],
+        )
 
     async def handle_click(call: ServiceCall) -> None:
         """Handle click service."""
-        await call_bridge("click", call.data["button"], call.data["clicks"])
+        await call_bridge(
+            "click",
+            call.data["button"],
+            call.data["clicks"],
+        )
 
     async def handle_scroll(call: ServiceCall) -> None:
         """Handle scroll service."""
@@ -196,7 +228,11 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     async def handle_write(call: ServiceCall) -> None:
         """Handle write service."""
-        await call_bridge("write", call.data["text"], call.data["interval"])
+        await call_bridge(
+            "write",
+            call.data["text"],
+            call.data["interval"],
+        )
 
     async def handle_press(call: ServiceCall) -> None:
         """Handle press service."""
