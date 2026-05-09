@@ -1,0 +1,136 @@
+arm:
+  fields:
+    seconds:
+      required: false
+      default: 30
+      example: 30
+      selector:
+        number:
+          min: 1
+          max: 120
+          mode: slider
+
+position:
+  fields: {}
+
+move:
+  fields:
+    x:
+      required: true
+      example: 500
+      selector:
+        number:
+          min: 0
+          max: 10000
+          mode: box
+    y:
+      required: true
+      example: 300
+      selector:
+        number:
+          min: 0
+          max: 10000
+          mode: box
+
+move_relative:
+  fields:
+    dx:
+      required: true
+      example: 20
+      selector:
+        number:
+          min: -300
+          max: 300
+          mode: box
+    dy:
+      required: true
+      example: -10
+      selector:
+        number:
+          min: -300
+          max: 300
+          mode: box
+
+click:
+  fields:
+    button:
+      required: false
+      default: left
+      example: left
+      selector:
+        select:
+          options:
+            - left
+            - right
+            - middle
+    clicks:
+      required: false
+      default: 1
+      example: 1
+      selector:
+        number:
+          min: 1
+          max: 3
+          mode: slider
+
+scroll:
+  fields:
+    amount:
+      required: true
+      example: -10
+      selector:
+        number:
+          min: -80
+          max: 80
+          mode: box
+
+write:
+  fields:
+    text:
+      required: true
+      example: Hello from Home Assistant
+      selector:
+        text:
+          multiline: false
+    interval:
+      required: false
+      default: 0
+      example: 0
+      selector:
+        number:
+          min: 0
+          max: 1
+          step: 0.01
+          mode: box
+
+press:
+  fields:
+    key:
+      required: true
+      example: enter
+      selector:
+        select:
+          custom_value: true
+          options:
+            - enter
+            - esc
+            - tab
+            - space
+            - left
+            - right
+            - up
+            - down
+            - backspace
+            - delete
+            - home
+            - end
+
+hotkey:
+  fields:
+    keys:
+      required: true
+      example:
+        - ctrl
+        - l
+      selector:
+        object:
