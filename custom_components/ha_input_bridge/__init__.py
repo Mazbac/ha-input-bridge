@@ -7,6 +7,10 @@ from typing import Any
 
 import voluptuous as vol
 
+from homeassistant.components.frontend import (
+    add_extra_js_url,
+    async_register_built_in_panel,
+)
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PORT, CONF_TOKEN
@@ -31,7 +35,10 @@ SERVICE_PRESS = "press"
 SERVICE_HOTKEY = "hotkey"
 
 CARD_URL_PATH = "/ha_input_bridge/pc-trackpad-card.js"
+PANEL_URL_PATH = "/ha_input_bridge/pc-trackpad-panel.js"
+
 CARD_FILE = Path(__file__).parent / "www" / "pc-trackpad-card.js"
+PANEL_FILE = Path(__file__).parent / "www" / "pc-trackpad-panel.js"
 
 
 SERVICE_ARM_SCHEMA = vol.Schema(
@@ -103,7 +110,7 @@ SERVICE_HOTKEY_SCHEMA = vol.Schema(
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Set up HA Input Bridge services and bundled frontend card."""
+    """Set up HA Input Bridge services and bundled frontend UI."""
     hass.data.setdefault(DOMAIN, {})
 
     await hass.http.async_register_static_paths(
@@ -112,8 +119,26 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 CARD_URL_PATH,
                 str(CARD_FILE),
                 True,
-            )
+            ),
+            StaticPathConfig(
+                PANEL_URL_PATH,
+                str(PANEL_FILE),
+                True,
+            ),
         ]
+    )
+
+    add_extra_js_url(hass, PANEL_URL_PATH)
+
+    async_register_built_in_panel(
+        hass,
+        component_name="ha-input-bridge-panel",
+        sidebar_title="PC Trackpad",
+        sidebar_icon="mdi:gesture-tap",
+        sidebar_default_visible=True,
+        frontend_url_path="pc-trackpad",
+        require_admin=False,
+        update=True,
     )
 
     async def get_client() -> HAInputBridgeClient:
