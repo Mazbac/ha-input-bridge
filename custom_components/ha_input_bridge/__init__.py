@@ -21,6 +21,8 @@ from .api import BridgeApiError, CannotConnect, HAInputBridgeClient, InvalidAuth
 from .const import DEFAULT_TIMEOUT, DOMAIN
 
 
+CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)
+
 SERVICE_ARM = "arm"
 SERVICE_POSITION = "position"
 SERVICE_MOVE = "move"
@@ -204,7 +206,11 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     async def handle_move(call: ServiceCall) -> None:
         """Handle absolute mouse move service."""
-        await call_bridge("move", call.data["x"], call.data["y"])
+        await call_bridge(
+            "move",
+            call.data["x"],
+            call.data["y"],
+        )
 
     async def handle_move_relative(call: ServiceCall) -> None:
         """Handle relative mouse move service."""
@@ -224,7 +230,10 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     async def handle_scroll(call: ServiceCall) -> None:
         """Handle scroll service."""
-        await call_bridge("scroll", call.data["amount"])
+        await call_bridge(
+            "scroll",
+            call.data["amount"],
+        )
 
     async def handle_write(call: ServiceCall) -> None:
         """Handle write service."""
@@ -236,11 +245,17 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     async def handle_press(call: ServiceCall) -> None:
         """Handle press service."""
-        await call_bridge("press", call.data["key"])
+        await call_bridge(
+            "press",
+            call.data["key"],
+        )
 
     async def handle_hotkey(call: ServiceCall) -> None:
         """Handle hotkey service."""
-        await call_bridge("hotkey", call.data["keys"])
+        await call_bridge(
+            "hotkey",
+            call.data["keys"],
+        )
 
     hass.services.async_register(
         DOMAIN,
