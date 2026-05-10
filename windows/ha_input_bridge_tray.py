@@ -13,7 +13,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import pystray
 from PIL import Image, ImageDraw
@@ -37,8 +37,12 @@ CONNECTION_INFO_NAME = "connection-info.txt"
 UNINSTALL_EXE_NAME = "unins000.exe"
 
 DEFAULT_PORT = 8765
+STATUS_POLL_SECONDS = 5
 
 _SINGLE_INSTANCE_MUTEX = None
+_STATUS_LOCK = threading.Lock()
+_STATUS_RUNNING = False
+_STATUS_TEXT = "Status: checking..."
 
 
 def acquire_single_instance_lock() -> bool:
@@ -217,12 +221,10 @@ def get_recommended_host(config: dict[str, Any]) -> str:
 
 
 def build_setup_info_text(config: dict[str, Any]) -> str:
-    recommended_host = get_recommended_host(config)
-
     return "\n".join(
         [
             "HA Input Bridge",
-            f"Host: {recommended_host}",
+            f"Host: {get_recommended_host(config)}",
             f"Port: {config.get('port', DEFAULT_PORT)}",
             f"Token: {config.get('token', '')}",
         ]
@@ -230,7 +232,6 @@ def build_setup_info_text(config: dict[str, Any]) -> str:
 
 
 def write_connection_info(config: dict[str, Any]) -> None:
-    recommended_host = get_recommended_host(config)
     candidates = get_host_candidates()
     candidates_text = ", ".join(candidates) if candidates else "Use the Windows PC IP address"
 
@@ -240,7 +241,7 @@ def write_connection_info(config: dict[str, Any]) -> None:
             "",
             "Use these values in Home Assistant:",
             "",
-            f"Host: {recommended_host}",
+            f"Host: {get_recommended_host(config)}",
             f"Port: {config.get('port', DEFAULT_PORT)}",
             f"Token: {config.get('token', '')}",
             "",
@@ -313,6 +314,11 @@ def read_bridge_port() -> int:
     return port
 
 
+def ps_quote(value: str | Path) -> str:
+    text = str(value).replace("'", "''")
+    return f"'{text}'"
+
+
 def run_powershell(script: str, wait: bool = True) -> subprocess.CompletedProcess[str] | subprocess.Popen:
     creationflags = 0
 
@@ -345,14 +351,7 @@ def run_powershell(script: str, wait: bool = True) -> subprocess.CompletedProces
     )
 
 
-def ps_quote(value: str | Path) -> str:
-    text = str(value).replace("'", "''")
-    return f"'{text}'"
-
-
 def set_clipboard_text(text: str, root: tk.Tk | tk.Toplevel | None = None) -> bool:
-    success = False
-
     try:
         temp_path = Path(tempfile.gettempdir()) / "ha-input-bridge-clipboard.txt"
         temp_path.write_text(text, encoding="utf-8")
@@ -365,12 +364,9 @@ Set-Clipboard -Value $Text
         result = run_powershell(script)
 
         if isinstance(result, subprocess.CompletedProcess) and result.returncode == 0:
-            success = True
+            return True
     except Exception:
-        success = False
-
-    if success:
-        return True
+        pass
 
     if root is not None:
         try:
@@ -385,8 +381,7 @@ Set-Clipboard -Value $Text
 
 
 def run_powershell_file_elevated(script: str) -> None:
-    temp_dir = Path(tempfile.gettempdir())
-    script_path = temp_dir / "ha-input-bridge-apply-settings.ps1"
+    script_path = Path(tempfile.gettempdir()) / "ha-input-bridge-apply-settings.ps1"
     script_path.write_text(script, encoding="utf-8")
 
     command = [
@@ -450,7 +445,7 @@ if ($null -ne $process) {{
     return result.stdout.strip().lower() == "ha-input-bridge-agent"
 
 
-def is_bridge_running() -> bool:
+def detect_bridge_running() -> bool:
     listener_pid = get_listener_process_id()
 
     if listener_pid is None:
@@ -459,15 +454,32 @@ def is_bridge_running() -> bool:
     return is_agent_process(listener_pid)
 
 
-def get_status_text() -> str:
-    if is_bridge_running():
-        return "Status: running"
+def update_status_cache() -> bool:
+    global _STATUS_RUNNING
+    global _STATUS_TEXT
 
-    return "Status: stopped"
+    running = detect_bridge_running()
+
+    with _STATUS_LOCK:
+        _STATUS_RUNNING = running
+        _STATUS_TEXT = "Status: running" if running else "Status: stopped"
+
+    return running
+
+
+def get_cached_status_text() -> str:
+    with _STATUS_LOCK:
+        return _STATUS_TEXT
+
+
+def get_cached_status_running() -> bool:
+    with _STATUS_LOCK:
+        return _STATUS_RUNNING
 
 
 def start_bridge() -> bool:
-    if is_bridge_running():
+    if detect_bridge_running():
+        update_status_cache()
         return True
 
     script = f"""
@@ -478,16 +490,25 @@ Start-Sleep -Seconds 2
     result = run_powershell(script)
 
     if isinstance(result, subprocess.CompletedProcess) and result.returncode != 0:
+        update_status_cache()
         return False
 
-    return is_bridge_running()
+    return update_status_cache()
 
 
 def stop_bridge() -> bool:
+    listener_pid = get_listener_process_id()
     agent_path = str(get_agent_path()).replace("'", "''")
+
+    listener_stop = ""
+
+    if listener_pid is not None:
+        listener_stop = f"Stop-Process -Id {listener_pid} -Force -ErrorAction SilentlyContinue"
 
     script = f"""
 Stop-ScheduledTask -TaskName '{TASK_NAME}' -ErrorAction SilentlyContinue
+
+{listener_stop}
 
 Get-CimInstance Win32_Process |
   Where-Object {{
@@ -507,9 +528,10 @@ Start-Sleep -Seconds 1
     result = run_powershell(script)
 
     if isinstance(result, subprocess.CompletedProcess) and result.returncode != 0:
+        update_status_cache()
         return False
 
-    return not is_bridge_running()
+    return not update_status_cache()
 
 
 def restart_bridge() -> bool:
@@ -611,6 +633,7 @@ def create_or_remove_startup_shortcut(enabled: bool) -> None:
 
     if enabled:
         shortcut.parent.mkdir(parents=True, exist_ok=True)
+
         script = f"""
 $ShortcutPath = {ps_quote(shortcut)}
 $TargetPath = {ps_quote(tray_path)}
@@ -651,13 +674,6 @@ def open_install_folder() -> None:
         os.startfile(path)
 
 
-def copy_connection_info_to_clipboard(root: tk.Tk | tk.Toplevel) -> bool:
-    config = load_config()
-    text = build_setup_info_text(config)
-
-    return set_clipboard_text(text, root)
-
-
 def run_uninstaller(icon: pystray.Icon) -> None:
     uninstall_path = get_uninstall_path()
 
@@ -670,11 +686,7 @@ def create_icon_image(running: bool) -> Image.Image:
     image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
 
-    if running:
-        fill = (35, 160, 80, 255)
-    else:
-        fill = (180, 55, 55, 255)
-
+    fill = (35, 160, 80, 255) if running else (180, 55, 55, 255)
     outline = (255, 255, 255, 255)
 
     draw.rounded_rectangle((8, 8, 56, 56), radius=12, fill=fill, outline=outline, width=3)
@@ -693,7 +705,7 @@ def notify(icon: pystray.Icon, message: str) -> None:
 
 
 def refresh_icon(icon: pystray.Icon) -> None:
-    running = is_bridge_running()
+    running = get_cached_status_running()
     icon.icon = create_icon_image(running)
     icon.title = f"{APP_NAME} - {'running' if running else 'stopped'}"
 
@@ -703,10 +715,50 @@ def refresh_icon(icon: pystray.Icon) -> None:
         pass
 
 
-def open_settings_window(icon: pystray.Icon | None = None) -> None:
+def status_monitor(icon: pystray.Icon) -> None:
+    while True:
+        update_status_cache()
+        refresh_icon(icon)
+        time.sleep(STATUS_POLL_SECONDS)
+
+
+def run_async_operation(
+    icon: pystray.Icon,
+    busy_message: str,
+    operation: Callable[[], bool],
+    success_message: str,
+    failure_message: str,
+) -> None:
+    notify(icon, busy_message)
+
+    def worker() -> None:
+        ok = operation()
+        refresh_icon(icon)
+        notify(icon, success_message if ok else failure_message)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def launch_settings_window() -> None:
+    if getattr(sys, "frozen", False):
+        subprocess.Popen([str(get_tray_path()), "--settings"], cwd=str(get_install_dir()))
+        return
+
+    subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--settings"])
+
+
+def copy_setup_info_from_tray(icon: pystray.Icon) -> None:
+    config = load_config()
+    text = build_setup_info_text(config)
+
+    if set_clipboard_text(text):
+        notify(icon, "Connection info copied.")
+    else:
+        notify(icon, "Could not copy connection info.")
+
+
+def open_settings_window() -> None:
     if tk is None or ttk is None or messagebox is None:
-        if icon is not None:
-            notify(icon, "Settings UI is unavailable.")
         return
 
     config = load_config()
@@ -718,31 +770,35 @@ def open_settings_window(icon: pystray.Icon | None = None) -> None:
     main = ttk.Frame(root, padding=16)
     main.grid(row=0, column=0, sticky="nsew")
 
-    bind_host_var = tk.StringVar(value=str(config.get("bind_host", "0.0.0.0")))
-    allowed_ip_var = tk.StringVar(value=str(config.get("allowed_client_ip", "")))
-    port_var = tk.StringVar(value=str(config.get("port", DEFAULT_PORT)))
+    status_var = tk.StringVar(value=get_cached_status_text())
     token_var = tk.StringVar(value=str(config.get("token", "")))
     token_visible_var = tk.BooleanVar(value=False)
     bridge_login_var = tk.BooleanVar(value=bool(config.get("start_bridge_on_login", True)))
     tray_login_var = tk.BooleanVar(value=bool(config.get("start_tray_on_login", True)))
 
-    row = 0
+    bind_host_var = tk.StringVar(value=str(config.get("bind_host", "0.0.0.0")))
+    allowed_ip_var = tk.StringVar(value=str(config.get("allowed_client_ip", "")))
+    port_var = tk.StringVar(value=str(config.get("port", DEFAULT_PORT)))
 
-    ttk.Label(main, text="Windows PC IP address to listen on:").grid(row=row, column=0, sticky="w")
-    ttk.Entry(main, textvariable=bind_host_var, width=46).grid(row=row, column=1, columnspan=2, sticky="ew", padx=(12, 0))
-    row += 1
+    notebook = ttk.Notebook(main)
+    notebook.grid(row=0, column=0, sticky="nsew")
 
-    ttk.Label(main, text="Home Assistant IP allowed to connect (optional):").grid(row=row, column=0, sticky="w", pady=(8, 0))
-    ttk.Entry(main, textvariable=allowed_ip_var, width=46).grid(row=row, column=1, columnspan=2, sticky="ew", padx=(12, 0), pady=(8, 0))
-    row += 1
+    basic = ttk.Frame(notebook, padding=12)
+    advanced = ttk.Frame(notebook, padding=12)
 
-    ttk.Label(main, text="Bridge port:").grid(row=row, column=0, sticky="w", pady=(8, 0))
-    ttk.Entry(main, textvariable=port_var, width=46).grid(row=row, column=1, columnspan=2, sticky="ew", padx=(12, 0), pady=(8, 0))
-    row += 1
+    notebook.add(basic, text="Basic")
+    notebook.add(advanced, text="Advanced")
 
-    ttk.Label(main, text="Token:").grid(row=row, column=0, sticky="w", pady=(8, 0))
-    token_entry = ttk.Entry(main, textvariable=token_var, width=46, show="•")
-    token_entry.grid(row=row, column=1, sticky="ew", padx=(12, 0), pady=(8, 0))
+    recommended_host = get_recommended_host(config)
+
+    ttk.Label(basic, textvariable=status_var).grid(row=0, column=0, columnspan=3, sticky="w")
+    ttk.Label(basic, text=f"Home Assistant host: {recommended_host}").grid(row=1, column=0, columnspan=3, sticky="w", pady=(8, 0))
+    ttk.Label(basic, text=f"Port: {config.get('port', DEFAULT_PORT)}").grid(row=2, column=0, columnspan=3, sticky="w", pady=(4, 0))
+    ttk.Label(basic, text="Listening mode: Automatic - all local network adapters").grid(row=3, column=0, columnspan=3, sticky="w", pady=(4, 0))
+
+    ttk.Label(basic, text="Token:").grid(row=4, column=0, sticky="w", pady=(12, 0))
+    token_entry = ttk.Entry(basic, textvariable=token_var, width=46, show="•")
+    token_entry.grid(row=4, column=1, sticky="ew", padx=(12, 0), pady=(12, 0))
 
     def toggle_token_visibility() -> None:
         if token_visible_var.get():
@@ -754,28 +810,32 @@ def open_settings_window(icon: pystray.Icon | None = None) -> None:
             token_visible_var.set(True)
             token_toggle_button.configure(text="Hide")
 
-    token_toggle_button = ttk.Button(main, text="Show", width=8, command=toggle_token_visibility)
-    token_toggle_button.grid(row=row, column=2, sticky="ew", padx=(8, 0), pady=(8, 0))
-    row += 1
+    token_toggle_button = ttk.Button(basic, text="Show", width=8, command=toggle_token_visibility)
+    token_toggle_button.grid(row=4, column=2, sticky="ew", padx=(8, 0), pady=(12, 0))
 
-    ttk.Checkbutton(main, text="Start bridge on Windows login", variable=bridge_login_var).grid(row=row, column=0, columnspan=3, sticky="w", pady=(12, 0))
-    row += 1
+    ttk.Checkbutton(basic, text="Start bridge on Windows login", variable=bridge_login_var).grid(row=5, column=0, columnspan=3, sticky="w", pady=(12, 0))
+    ttk.Checkbutton(basic, text="Start tray icon on Windows login", variable=tray_login_var).grid(row=6, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
-    ttk.Checkbutton(main, text="Start tray icon on Windows login", variable=tray_login_var).grid(row=row, column=0, columnspan=3, sticky="w", pady=(4, 0))
-    row += 1
+    ttk.Label(advanced, text="Bind address:").grid(row=0, column=0, sticky="w")
+    ttk.Entry(advanced, textvariable=bind_host_var, width=46).grid(row=0, column=1, sticky="ew", padx=(12, 0))
 
-    status_var = tk.StringVar(value=get_status_text())
-    ttk.Label(main, textvariable=status_var).grid(row=row, column=0, columnspan=3, sticky="w", pady=(12, 0))
-    row += 1
+    ttk.Label(advanced, text="Allowed Home Assistant IP:").grid(row=1, column=0, sticky="w", pady=(8, 0))
+    ttk.Entry(advanced, textvariable=allowed_ip_var, width=46).grid(row=1, column=1, sticky="ew", padx=(12, 0), pady=(8, 0))
+
+    ttk.Label(advanced, text="Bridge port:").grid(row=2, column=0, sticky="w", pady=(8, 0))
+    ttk.Entry(advanced, textvariable=port_var, width=46).grid(row=2, column=1, sticky="ew", padx=(12, 0), pady=(8, 0))
+
+    ttk.Label(
+        advanced,
+        text="Leave Allowed Home Assistant IP empty to allow the local subnet. Use 0.0.0.0 to listen on all adapters.",
+        wraplength=520,
+    ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(12, 0))
 
     def validate_form() -> dict[str, Any] | None:
-        bind_host = bind_host_var.get().strip()
+        bind_host = bind_host_var.get().strip() or "0.0.0.0"
         allowed_ip = allowed_ip_var.get().strip()
         port_text = port_var.get().strip()
         token = token_var.get().strip()
-
-        if not bind_host:
-            bind_host = "0.0.0.0"
 
         try:
             port = int(port_text)
@@ -804,11 +864,9 @@ def open_settings_window(icon: pystray.Icon | None = None) -> None:
             "start_tray_on_login": bool(tray_login_var.get()),
         }
 
-    def refresh_status() -> None:
-        status_var.set(get_status_text())
-
-        if icon is not None:
-            refresh_icon(icon)
+    def refresh_settings_status() -> None:
+        update_status_cache()
+        status_var.set(get_cached_status_text())
 
     def save_and_restart() -> None:
         new_config = validate_form()
@@ -829,10 +887,7 @@ def open_settings_window(icon: pystray.Icon | None = None) -> None:
 
         def worker() -> None:
             apply_system_settings_elevated(new_config)
-            root.after(0, refresh_status)
-
-            if icon is not None:
-                notify(icon, "Settings saved and bridge restarted.")
+            root.after(0, refresh_settings_status)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -848,10 +903,10 @@ def open_settings_window(icon: pystray.Icon | None = None) -> None:
         save_config(new_config)
         write_connection_info(new_config)
 
-        if copy_connection_info_to_clipboard(root):
+        if set_clipboard_text(build_setup_info_text(new_config), root):
             messagebox.showinfo(APP_NAME, "Connection info copied to clipboard.")
         else:
-            messagebox.showerror(APP_NAME, "Could not copy connection info to clipboard. Use Open Info File instead.")
+            messagebox.showerror(APP_NAME, "Could not copy connection info. Use Open Info File instead.")
 
     def open_info() -> None:
         new_config = validate_form()
@@ -863,7 +918,7 @@ def open_settings_window(icon: pystray.Icon | None = None) -> None:
         open_connection_info()
 
     buttons = ttk.Frame(main)
-    buttons.grid(row=row, column=0, columnspan=3, sticky="ew", pady=(16, 0))
+    buttons.grid(row=1, column=0, sticky="ew", pady=(12, 0))
 
     ttk.Button(buttons, text="Save & Restart Bridge", command=save_and_restart).grid(row=0, column=0, padx=(0, 8))
     ttk.Button(buttons, text="Regenerate Token", command=regenerate_token).grid(row=0, column=1, padx=(0, 8))
@@ -871,7 +926,7 @@ def open_settings_window(icon: pystray.Icon | None = None) -> None:
     ttk.Button(buttons, text="Open Info File", command=open_info).grid(row=0, column=3)
 
     buttons2 = ttk.Frame(main)
-    buttons2.grid(row=row + 1, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+    buttons2.grid(row=2, column=0, sticky="ew", pady=(8, 0))
 
     ttk.Button(buttons2, text="Open Logs", command=open_logs_folder).grid(row=0, column=0, padx=(0, 8))
     ttk.Button(buttons2, text="Open Install Folder", command=open_install_folder).grid(row=0, column=1, padx=(0, 8))
@@ -881,34 +936,41 @@ def open_settings_window(icon: pystray.Icon | None = None) -> None:
 
 
 def on_start(icon: pystray.Icon, item: pystray.MenuItem) -> None:
-    if start_bridge():
-        notify(icon, "Bridge started.")
-    else:
-        notify(icon, "Bridge could not be started.")
-
-    refresh_icon(icon)
+    run_async_operation(
+        icon,
+        "Starting bridge...",
+        start_bridge,
+        "Bridge started.",
+        "Bridge could not be started.",
+    )
 
 
 def on_stop(icon: pystray.Icon, item: pystray.MenuItem) -> None:
-    if stop_bridge():
-        notify(icon, "Bridge stopped.")
-    else:
-        notify(icon, "Bridge could not be stopped.")
-
-    refresh_icon(icon)
+    run_async_operation(
+        icon,
+        "Stopping bridge...",
+        stop_bridge,
+        "Bridge stopped.",
+        "Bridge could not be stopped.",
+    )
 
 
 def on_restart(icon: pystray.Icon, item: pystray.MenuItem) -> None:
-    if restart_bridge():
-        notify(icon, "Bridge restarted.")
-    else:
-        notify(icon, "Bridge could not be restarted.")
-
-    refresh_icon(icon)
+    run_async_operation(
+        icon,
+        "Restarting bridge...",
+        restart_bridge,
+        "Bridge restarted.",
+        "Bridge could not be restarted.",
+    )
 
 
 def on_settings(icon: pystray.Icon, item: pystray.MenuItem) -> None:
-    threading.Thread(target=open_settings_window, args=(icon,), daemon=True).start()
+    launch_settings_window()
+
+
+def on_copy_setup_info(icon: pystray.Icon, item: pystray.MenuItem) -> None:
+    threading.Thread(target=copy_setup_info_from_tray, args=(icon,), daemon=True).start()
 
 
 def on_open_connection_info(icon: pystray.Icon, item: pystray.MenuItem) -> None:
@@ -933,9 +995,10 @@ def on_exit(icon: pystray.Icon, item: pystray.MenuItem) -> None:
 
 def build_menu() -> pystray.Menu:
     return pystray.Menu(
-        pystray.MenuItem(lambda item: get_status_text(), None, enabled=False),
+        pystray.MenuItem(lambda item: get_cached_status_text(), None, enabled=False),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Settings...", on_settings),
+        pystray.MenuItem("Copy setup info", on_copy_setup_info),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Start bridge", on_start),
         pystray.MenuItem("Stop bridge", on_stop),
@@ -951,17 +1014,24 @@ def build_menu() -> pystray.Menu:
 
 
 def main() -> None:
+    if "--settings" in sys.argv:
+        update_status_cache()
+        open_settings_window()
+        return
+
     if not acquire_single_instance_lock():
         return
 
-    running = is_bridge_running()
+    update_status_cache()
 
     icon = pystray.Icon(
         "ha-input-bridge",
-        create_icon_image(running),
-        f"{APP_NAME} - {'running' if running else 'stopped'}",
+        create_icon_image(get_cached_status_running()),
+        f"{APP_NAME} - {'running' if get_cached_status_running() else 'stopped'}",
         build_menu(),
     )
+
+    threading.Thread(target=status_monitor, args=(icon,), daemon=True).start()
 
     icon.run()
 
