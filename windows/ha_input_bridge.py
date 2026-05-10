@@ -95,7 +95,7 @@ def load_config() -> dict[str, Any]:
         return {}
 
     try:
-        with config_path.open("r", encoding="utf-8") as file:
+        with config_path.open("r", encoding="utf-8-sig") as file:
             data = json.load(file)
     except (OSError, json.JSONDecodeError):
         return {}
