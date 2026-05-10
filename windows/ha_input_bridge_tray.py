@@ -4,6 +4,7 @@ import json
 import os
 import re
 import secrets
+import socket
 import string
 import subprocess
 import sys
@@ -81,13 +82,22 @@ def get_bridge_log_path() -> Path:
 
 
 def get_startup_shortcut_path() -> Path:
-    return Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "HA Input Bridge Tray.lnk"
+    return (
+        Path(os.environ.get("APPDATA", ""))
+        / "Microsoft"
+        / "Windows"
+        / "Start Menu"
+        / "Programs"
+        / "Startup"
+        / "HA Input Bridge Tray.lnk"
+    )
 
 
 def default_config() -> dict[str, Any]:
     return {
-        "bind_host": "",
+        "bind_host": "0.0.0.0",
         "allowed_client_ip": "",
+        "firewall_remote_address": "LocalSubnet",
         "port": DEFAULT_PORT,
         "token": "",
         "log_file": str(get_bridge_log_path()),
@@ -104,7 +114,7 @@ def load_config() -> dict[str, Any]:
         return config
 
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError):
         return config
 
@@ -112,6 +122,11 @@ def load_config() -> dict[str, Any]:
         return config
 
     config.update(data)
+
+    if not config.get("firewall_remote_address"):
+        allowed_client_ip = str(config.get("allowed_client_ip", "")).strip()
+        config["firewall_remote_address"] = allowed_client_ip or "LocalSubnet"
+
     return config
 
 
@@ -119,6 +134,15 @@ def save_config(config: dict[str, Any]) -> None:
     data_dir = get_data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
 
+    allowed_client_ip = str(config.get("allowed_client_ip", "")).strip()
+    firewall_remote_address = str(config.get("firewall_remote_address", "")).strip()
+
+    if not firewall_remote_address:
+        firewall_remote_address = allowed_client_ip or "LocalSubnet"
+
+    config["bind_host"] = str(config.get("bind_host", "0.0.0.0")).strip() or "0.0.0.0"
+    config["allowed_client_ip"] = allowed_client_ip
+    config["firewall_remote_address"] = firewall_remote_address
     config["port"] = int(config.get("port", DEFAULT_PORT))
     config["log_file"] = str(get_bridge_log_path())
 
@@ -133,16 +157,70 @@ def generate_token() -> str:
     return "".join(secrets.choice(alphabet) for _ in range(43))
 
 
+def is_usable_host_ip(ip_address: str) -> bool:
+    return (
+        ip_address
+        and not ip_address.startswith("127.")
+        and not ip_address.startswith("169.254.")
+        and ip_address != "0.0.0.0"
+    )
+
+
+def get_host_candidates() -> list[str]:
+    candidates: list[str] = []
+
+    try:
+        hostname = socket.gethostname()
+        infos = socket.getaddrinfo(hostname, None, socket.AF_INET)
+    except OSError:
+        infos = []
+
+    for info in infos:
+        ip_address = info[4][0]
+
+        if is_usable_host_ip(ip_address) and ip_address not in candidates:
+            candidates.append(ip_address)
+
+    return candidates
+
+
+def get_recommended_host(config: dict[str, Any]) -> str:
+    bind_host = str(config.get("bind_host", "")).strip()
+
+    if is_usable_host_ip(bind_host):
+        return bind_host
+
+    candidates = get_host_candidates()
+
+    if candidates:
+        return candidates[0]
+
+    return bind_host or "0.0.0.0"
+
+
 def write_connection_info(config: dict[str, Any]) -> None:
+    recommended_host = get_recommended_host(config)
+    candidates = get_host_candidates()
+    candidates_text = ", ".join(candidates) if candidates else "Use the Windows PC IP address"
+
     text = "\n".join(
         [
             "HA Input Bridge connection details",
             "",
             "Use these values in Home Assistant:",
             "",
-            f"Host: {config.get('bind_host', '')}",
+            f"Host: {recommended_host}",
             f"Port: {config.get('port', DEFAULT_PORT)}",
             f"Token: {config.get('token', '')}",
+            "",
+            "Possible Host values:",
+            candidates_text,
+            "",
+            "Bridge bind address:",
+            str(config.get("bind_host", "0.0.0.0")),
+            "",
+            "Firewall remote address:",
+            str(config.get("firewall_remote_address", "LocalSubnet")),
             "",
             "Tray app:",
             str(get_tray_path()),
@@ -171,7 +249,7 @@ def read_connection_info() -> str:
         return ""
 
     try:
-        return path.read_text(encoding="utf-8", errors="replace")
+        return path.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return ""
 
@@ -396,6 +474,16 @@ def apply_system_settings_elevated(config: dict[str, Any]) -> None:
     runtime_log_path = get_runtime_log_path()
 
     bridge_on_login = bool(config.get("start_bridge_on_login", True))
+    bridge_on_login_ps = "$true" if bridge_on_login else "$false"
+
+    firewall_remote_address = str(
+        config.get("firewall_remote_address")
+        or config.get("allowed_client_ip")
+        or "LocalSubnet"
+    ).strip()
+
+    if not firewall_remote_address:
+        firewall_remote_address = "LocalSubnet"
 
     task_enabled_script = (
         f"Enable-ScheduledTask -TaskName {ps_quote(TASK_NAME)} | Out-Null"
@@ -414,7 +502,8 @@ $RuntimeLog = {ps_quote(runtime_log_path)}
 $TaskName = {ps_quote(TASK_NAME)}
 $FirewallRuleName = {ps_quote(FIREWALL_RULE_NAME)}
 $Port = {int(config.get("port", DEFAULT_PORT))}
-$AllowedClientIp = {ps_quote(str(config.get("allowed_client_ip", "")))}
+$FirewallRemoteAddress = {ps_quote(firewall_remote_address)}
+$StartBridgeOnLogin = {bridge_on_login_ps}
 $CurrentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 
 New-Item -ItemType Directory -Path $DataDir -Force | Out-Null
@@ -450,11 +539,11 @@ New-NetFirewallRule `
   -Protocol TCP `
   -LocalPort $Port `
   -Action Allow `
-  -RemoteAddress $AllowedClientIp | Out-Null
+  -RemoteAddress $FirewallRemoteAddress | Out-Null
 
 {task_enabled_script}
 
-if ({str(bridge_on_login).lower()}) {{
+if ($StartBridgeOnLogin) {{
   Start-ScheduledTask -TaskName $TaskName
 }}
 
@@ -512,11 +601,12 @@ def open_install_folder() -> None:
 
 def copy_connection_info_to_clipboard(root: tk.Tk | tk.Toplevel) -> None:
     config = load_config()
+    recommended_host = get_recommended_host(config)
 
     text = "\n".join(
         [
             "HA Input Bridge",
-            f"Host: {config.get('bind_host', '')}",
+            f"Host: {recommended_host}",
             f"Port: {config.get('port', DEFAULT_PORT)}",
             f"Token: {config.get('token', '')}",
         ]
@@ -587,7 +677,7 @@ def open_settings_window(icon: pystray.Icon | None = None) -> None:
     main = ttk.Frame(root, padding=16)
     main.grid(row=0, column=0, sticky="nsew")
 
-    bind_host_var = tk.StringVar(value=str(config.get("bind_host", "")))
+    bind_host_var = tk.StringVar(value=str(config.get("bind_host", "0.0.0.0")))
     allowed_ip_var = tk.StringVar(value=str(config.get("allowed_client_ip", "")))
     port_var = tk.StringVar(value=str(config.get("port", DEFAULT_PORT)))
     token_var = tk.StringVar(value=str(config.get("token", "")))
@@ -600,7 +690,7 @@ def open_settings_window(icon: pystray.Icon | None = None) -> None:
     ttk.Entry(main, textvariable=bind_host_var, width=46).grid(row=row, column=1, sticky="ew", padx=(12, 0))
     row += 1
 
-    ttk.Label(main, text="Home Assistant IP allowed to connect:").grid(row=row, column=0, sticky="w", pady=(8, 0))
+    ttk.Label(main, text="Home Assistant IP allowed to connect (optional):").grid(row=row, column=0, sticky="w", pady=(8, 0))
     ttk.Entry(main, textvariable=allowed_ip_var, width=46).grid(row=row, column=1, sticky="ew", padx=(12, 0), pady=(8, 0))
     row += 1
 
@@ -629,12 +719,7 @@ def open_settings_window(icon: pystray.Icon | None = None) -> None:
         token = token_var.get().strip()
 
         if not bind_host:
-            messagebox.showerror(APP_NAME, "Enter the Windows PC IP address.")
-            return None
-
-        if not allowed_ip:
-            messagebox.showerror(APP_NAME, "Enter the Home Assistant IP address.")
-            return None
+            bind_host = "0.0.0.0"
 
         try:
             port = int(port_text)
@@ -650,9 +735,12 @@ def open_settings_window(icon: pystray.Icon | None = None) -> None:
             messagebox.showerror(APP_NAME, "Token cannot be empty.")
             return None
 
+        firewall_remote_address = allowed_ip if allowed_ip else "LocalSubnet"
+
         return {
             "bind_host": bind_host,
             "allowed_client_ip": allowed_ip,
+            "firewall_remote_address": firewall_remote_address,
             "port": port,
             "token": token,
             "log_file": str(get_bridge_log_path()),
