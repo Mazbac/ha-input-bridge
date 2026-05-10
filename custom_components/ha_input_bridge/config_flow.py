@@ -2,16 +2,51 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT, CONF_TOKEN
+from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import CannotConnect, HAInputBridgeClient, InvalidAuth
 from .const import DEFAULT_NAME, DEFAULT_PORT, DEFAULT_TIMEOUT, DOMAIN
+
+CONF_SETUP_INFO = "setup_info"
+
+
+def parse_setup_info(setup_info: str) -> dict[str, Any]:
+    """Parse setup info copied from the Windows tray app."""
+    text = setup_info.strip()
+
+    host = ""
+    port = DEFAULT_PORT
+    token = ""
+
+    host_match = re.search(r"^Host:\s*(.+?)\s*$", text, re.MULTILINE | re.IGNORECASE)
+    port_match = re.search(r"^Port:\s*(\d+)\s*$", text, re.MULTILINE | re.IGNORECASE)
+    token_match = re.search(r"^Token:\s*(.+?)\s*$", text, re.MULTILINE | re.IGNORECASE)
+
+    if host_match:
+        host = host_match.group(1).strip()
+
+    if port_match:
+        port = int(port_match.group(1).strip())
+
+    if token_match:
+        token = token_match.group(1).strip()
+
+    if not host and text and "\n" not in text and ":" not in text:
+        host = text
+
+    return {
+        CONF_HOST: host,
+        CONF_PORT: port,
+        CONF_TOKEN: token,
+    }
 
 
 class HAInputBridgeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -27,48 +62,59 @@ class HAInputBridgeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            host = user_input[CONF_HOST].strip()
-            port = int(user_input[CONF_PORT])
-            token = user_input[CONF_TOKEN].strip()
             name = user_input[CONF_NAME].strip() or DEFAULT_NAME
+            setup_info = user_input[CONF_SETUP_INFO].strip()
 
-            await self.async_set_unique_id(f"{host}:{port}")
-            self._abort_if_unique_id_configured()
+            parsed = parse_setup_info(setup_info)
 
-            session = async_get_clientsession(self.hass)
-            client = HAInputBridgeClient(
-                session=session,
-                host=host,
-                port=port,
-                token=token,
-                timeout_seconds=DEFAULT_TIMEOUT,
-            )
+            host = str(parsed[CONF_HOST]).strip()
+            port = int(parsed[CONF_PORT])
+            token = str(parsed[CONF_TOKEN]).strip()
 
-            try:
-                await client.health()
-            except CannotConnect:
-                errors["base"] = "cannot_connect"
-            except InvalidAuth:
-                errors["base"] = "invalid_auth"
-            except Exception:
-                errors["base"] = "unknown"
+            if not host:
+                errors["base"] = "missing_host"
+            elif not token:
+                errors["base"] = "missing_token"
+            elif port < 1 or port > 65535:
+                errors["base"] = "invalid_port"
             else:
-                return self.async_create_entry(
-                    title=name,
-                    data={
-                        CONF_NAME: name,
-                        CONF_HOST: host,
-                        CONF_PORT: port,
-                        CONF_TOKEN: token,
-                    },
+                await self.async_set_unique_id(f"{host}:{port}")
+                self._abort_if_unique_id_configured()
+
+                session = async_get_clientsession(self.hass)
+                client = HAInputBridgeClient(
+                    session=session,
+                    host=host,
+                    port=port,
+                    token=token,
+                    timeout_seconds=DEFAULT_TIMEOUT,
                 )
+
+                try:
+                    await client.health()
+                except CannotConnect:
+                    errors["base"] = "cannot_connect"
+                except InvalidAuth:
+                    errors["base"] = "invalid_auth"
+                except Exception:
+                    errors["base"] = "unknown"
+                else:
+                    return self.async_create_entry(
+                        title=name,
+                        data={
+                            CONF_NAME: name,
+                            CONF_HOST: host,
+                            CONF_PORT: port,
+                            CONF_TOKEN: token,
+                        },
+                    )
 
         data_schema = vol.Schema(
             {
                 vol.Required(CONF_NAME, default=DEFAULT_NAME): str,
-                vol.Required(CONF_HOST): str,
-                vol.Required(CONF_PORT, default=DEFAULT_PORT): int,
-                vol.Required(CONF_TOKEN): str,
+                vol.Required(CONF_SETUP_INFO): selector.TextSelector(
+                    selector.TextSelectorConfig(multiline=True)
+                ),
             }
         )
 
