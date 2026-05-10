@@ -1,5 +1,5 @@
 #define MyAppName "HA Input Bridge"
-#define MyAppVersion "0.4.0"
+#define MyAppVersion "0.5.0"
 #define MyAppPublisher "Mazbac"
 #define MyAgentExeName "ha-input-bridge-agent.exe"
 #define MyTrayExeName "ha-input-bridge-tray.exe"
@@ -25,6 +25,7 @@ SetupLogging=yes
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: unchecked
 Name: "starttray"; Description: "Start the tray icon after installation"; GroupDescription: "Startup:"; Flags: checkedonce
+Name: "starttrayonlogin"; Description: "Start the tray icon when Windows starts"; GroupDescription: "Startup:"; Flags: checkedonce
 
 [Files]
 Source: "dist\{#MyAgentExeName}"; DestDir: "{app}"; Flags: ignoreversion
@@ -36,7 +37,7 @@ Name: "{autoprograms}\HA Input Bridge\Connection Info"; Filename: "{app}\connect
 Name: "{autoprograms}\HA Input Bridge\Logs Folder"; Filename: "{commonappdata}\HA Input Bridge"
 Name: "{autoprograms}\HA Input Bridge\Install Folder"; Filename: "{app}"
 Name: "{autodesktop}\HA Input Bridge"; Filename: "{app}\{#MyTrayExeName}"; Tasks: desktopicon
-Name: "{userstartup}\HA Input Bridge Tray"; Filename: "{app}\{#MyTrayExeName}"
+Name: "{userstartup}\HA Input Bridge Tray"; Filename: "{app}\{#MyTrayExeName}"; Tasks: starttrayonlogin
 
 [Run]
 Filename: "{app}\{#MyTrayExeName}"; Description: "Start HA Input Bridge tray icon"; Flags: nowait postinstall skipifsilent; Tasks: starttray
@@ -45,9 +46,6 @@ Filename: "{app}\{#MyTrayExeName}"; Description: "Start HA Input Bridge tray ico
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\uninstall-cleanup.ps1"""; Flags: runhidden; RunOnceId: "HAInputBridgeCleanup"
 
 [Code]
-var
-  ConfigPage: TInputQueryWizardPage;
-
 function CRLF(): String;
 begin
   Result := #13#10;
@@ -59,101 +57,12 @@ begin
   Result := Chr(39) + Value + Chr(39);
 end;
 
-function TrimText(Value: String): String;
-begin
-  Result := Trim(Value);
-end;
-
-function IsDigitsOnly(Value: String): Boolean;
-var
-  I: Integer;
-begin
-  Result := Length(Value) > 0;
-
-  for I := 1 to Length(Value) do
-  begin
-    if Pos(Copy(Value, I, 1), '0123456789') = 0 then
-    begin
-      Result := False;
-      Exit;
-    end;
-  end;
-end;
-
-procedure InitializeWizard();
-begin
-  ConfigPage := CreateInputQueryPage(
-    wpSelectDir,
-    'Bridge configuration',
-    'Configure the Windows bridge connection.',
-    'Enter the Windows PC IP address and the Home Assistant IP address.'
-  );
-
-  ConfigPage.Add('Windows PC IP address to listen on:', False);
-  ConfigPage.Add('Home Assistant IP address allowed to connect:', False);
-  ConfigPage.Add('Bridge port:', False);
-
-  ConfigPage.Values[0] := '';
-  ConfigPage.Values[1] := '';
-  ConfigPage.Values[2] := '8765';
-end;
-
-function NextButtonClick(CurPageID: Integer): Boolean;
-var
-  PortNumber: Integer;
-begin
-  Result := True;
-
-  if CurPageID = ConfigPage.ID then
-  begin
-    ConfigPage.Values[0] := TrimText(ConfigPage.Values[0]);
-    ConfigPage.Values[1] := TrimText(ConfigPage.Values[1]);
-    ConfigPage.Values[2] := TrimText(ConfigPage.Values[2]);
-
-    if ConfigPage.Values[0] = '' then
-    begin
-      MsgBox('Enter the Windows PC IP address.', mbError, MB_OK);
-      Result := False;
-      Exit;
-    end;
-
-    if ConfigPage.Values[1] = '' then
-    begin
-      MsgBox('Enter the Home Assistant IP address.', mbError, MB_OK);
-      Result := False;
-      Exit;
-    end;
-
-    if not IsDigitsOnly(ConfigPage.Values[2]) then
-    begin
-      MsgBox('Enter a numeric bridge port.', mbError, MB_OK);
-      Result := False;
-      Exit;
-    end;
-
-    PortNumber := StrToIntDef(ConfigPage.Values[2], 0);
-
-    if (PortNumber < 1) or (PortNumber > 65535) then
-    begin
-      MsgBox('Enter a bridge port between 1 and 65535.', mbError, MB_OK);
-      Result := False;
-      Exit;
-    end;
-  end;
-end;
-
 function BuildPostInstallScript(): String;
 var
   S: String;
   AppDir: String;
-  BindHost: String;
-  AllowedClientIp: String;
-  Port: String;
 begin
   AppDir := ExpandConstant('{app}');
-  BindHost := ConfigPage.Values[0];
-  AllowedClientIp := ConfigPage.Values[1];
-  Port := ConfigPage.Values[2];
 
   S := '';
   S := S + '$ErrorActionPreference = "Stop"' + CRLF();
@@ -171,9 +80,10 @@ begin
   S := S + '$BridgeLog = Join-Path $DataDir "ha_input_bridge.log"' + CRLF();
   S := S + '$TaskName = "HA Input Bridge"' + CRLF();
   S := S + '$FirewallRuleName = "HA Input Bridge - Home Assistant only"' + CRLF();
-  S := S + '$BindHost = ' + PsQuote(BindHost) + CRLF();
-  S := S + '$AllowedClientIp = ' + PsQuote(AllowedClientIp) + CRLF();
-  S := S + '$Port = ' + Port + CRLF();
+  S := S + '$DefaultBindHost = "0.0.0.0"' + CRLF();
+  S := S + '$DefaultAllowedClientIp = ""' + CRLF();
+  S := S + '$DefaultFirewallRemoteAddress = "LocalSubnet"' + CRLF();
+  S := S + '$DefaultPort = 8765' + CRLF();
   S := S + '$CurrentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name' + CRLF();
   S := S + CRLF();
 
@@ -181,21 +91,73 @@ begin
   S := S + '& icacls $DataDir /grant "${CurrentUser}:(OI)(CI)M" /T | Out-Null' + CRLF();
   S := S + CRLF();
 
-  S := S + '$TokenBytes = New-Object byte[] 32' + CRLF();
-  S := S + '$Rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()' + CRLF();
-  S := S + '$Rng.GetBytes($TokenBytes)' + CRLF();
-  S := S + '$Rng.Dispose()' + CRLF();
-  S := S + '$Token = [Convert]::ToBase64String($TokenBytes).TrimEnd("=").Replace("+", "-").Replace("/", "_")' + CRLF();
+  S := S + '$ExistingConfig = $null' + CRLF();
+  S := S + 'if (Test-Path $ConfigPath) {' + CRLF();
+  S := S + '  try {' + CRLF();
+  S := S + '    $ExistingConfig = Get-Content $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json' + CRLF();
+  S := S + '  }' + CRLF();
+  S := S + '  catch {' + CRLF();
+  S := S + '    $ExistingConfig = $null' + CRLF();
+  S := S + '  }' + CRLF();
+  S := S + '}' + CRLF();
+  S := S + CRLF();
+
+  S := S + '$BindHost = $DefaultBindHost' + CRLF();
+  S := S + '$AllowedClientIp = $DefaultAllowedClientIp' + CRLF();
+  S := S + '$FirewallRemoteAddress = $DefaultFirewallRemoteAddress' + CRLF();
+  S := S + '$Port = $DefaultPort' + CRLF();
+  S := S + '$Token = ""' + CRLF();
+  S := S + '$StartBridgeOnLogin = $true' + CRLF();
+  S := S + '$StartTrayOnLogin = $true' + CRLF();
+  S := S + CRLF();
+
+  S := S + 'if ($null -ne $ExistingConfig) {' + CRLF();
+  S := S + '  if ($ExistingConfig.bind_host) { $BindHost = [string]$ExistingConfig.bind_host }' + CRLF();
+  S := S + '  if ($null -ne $ExistingConfig.allowed_client_ip) { $AllowedClientIp = [string]$ExistingConfig.allowed_client_ip }' + CRLF();
+  S := S + '  if ($ExistingConfig.firewall_remote_address) { $FirewallRemoteAddress = [string]$ExistingConfig.firewall_remote_address }' + CRLF();
+  S := S + '  elseif ($ExistingConfig.allowed_client_ip) { $FirewallRemoteAddress = [string]$ExistingConfig.allowed_client_ip }' + CRLF();
+  S := S + '  if ($ExistingConfig.port) { $Port = [int]$ExistingConfig.port }' + CRLF();
+  S := S + '  if ($ExistingConfig.token) { $Token = [string]$ExistingConfig.token }' + CRLF();
+  S := S + '  if ($null -ne $ExistingConfig.start_bridge_on_login) { $StartBridgeOnLogin = [bool]$ExistingConfig.start_bridge_on_login }' + CRLF();
+  S := S + '  if ($null -ne $ExistingConfig.start_tray_on_login) { $StartTrayOnLogin = [bool]$ExistingConfig.start_tray_on_login }' + CRLF();
+  S := S + '}' + CRLF();
+  S := S + CRLF();
+
+  S := S + 'if ($Port -lt 1 -or $Port -gt 65535) { $Port = $DefaultPort }' + CRLF();
+  S := S + 'if ([string]::IsNullOrWhiteSpace($BindHost)) { $BindHost = $DefaultBindHost }' + CRLF();
+  S := S + 'if ([string]::IsNullOrWhiteSpace($FirewallRemoteAddress)) { $FirewallRemoteAddress = $DefaultFirewallRemoteAddress }' + CRLF();
+  S := S + CRLF();
+
+  S := S + 'if ([string]::IsNullOrWhiteSpace($Token)) {' + CRLF();
+  S := S + '  $TokenBytes = New-Object byte[] 32' + CRLF();
+  S := S + '  $Rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()' + CRLF();
+  S := S + '  $Rng.GetBytes($TokenBytes)' + CRLF();
+  S := S + '  $Rng.Dispose()' + CRLF();
+  S := S + '  $Token = [Convert]::ToBase64String($TokenBytes).TrimEnd("=").Replace("+", "-").Replace("/", "_")' + CRLF();
+  S := S + '}' + CRLF();
+  S := S + CRLF();
+
+  S := S + '$HostCandidates = @(' + CRLF();
+  S := S + '  Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |' + CRLF();
+  S := S + '    Where-Object {' + CRLF();
+  S := S + '      $_.IPAddress -notlike "127.*" -and' + CRLF();
+  S := S + '      $_.IPAddress -notlike "169.254.*" -and' + CRLF();
+  S := S + '      $_.IPAddress -ne "0.0.0.0"' + CRLF();
+  S := S + '    } |' + CRLF();
+  S := S + '    Select-Object -ExpandProperty IPAddress -Unique' + CRLF();
+  S := S + ')' + CRLF();
+  S := S + '$HostCandidateText = if ($HostCandidates.Count -gt 0) { $HostCandidates -join ", " } else { "Use the Windows PC IP address" }' + CRLF();
   S := S + CRLF();
 
   S := S + '$Config = [ordered]@{' + CRLF();
   S := S + '  bind_host = $BindHost' + CRLF();
   S := S + '  allowed_client_ip = $AllowedClientIp' + CRLF();
+  S := S + '  firewall_remote_address = $FirewallRemoteAddress' + CRLF();
   S := S + '  port = [int]$Port' + CRLF();
   S := S + '  token = $Token' + CRLF();
   S := S + '  log_file = $BridgeLog' + CRLF();
-  S := S + '  start_bridge_on_login = $true' + CRLF();
-  S := S + '  start_tray_on_login = $true' + CRLF();
+  S := S + '  start_bridge_on_login = $StartBridgeOnLogin' + CRLF();
+  S := S + '  start_tray_on_login = $StartTrayOnLogin' + CRLF();
   S := S + '}' + CRLF();
   S := S + '$Config | ConvertTo-Json -Depth 5 | Set-Content -Path $ConfigPath -Encoding UTF8' + CRLF();
   S := S + CRLF();
@@ -213,6 +175,7 @@ begin
   S := S + 'Get-NetFirewallRule -DisplayName ''HA Input Bridge - Home Assistant only'' -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue' + CRLF();
   S := S + 'Get-CimInstance Win32_Process | Where-Object { `$_.CommandLine -like ''*ha-input-bridge-agent.exe*'' -or `$_.CommandLine -like ''*ha-input-bridge-tray.exe*'' } | ForEach-Object { Stop-Process -Id `$_.ProcessId -Force -ErrorAction SilentlyContinue }' + CRLF();
   S := S + 'Remove-Item -Path "$env:ProgramData\HA Input Bridge" -Recurse -Force -ErrorAction SilentlyContinue' + CRLF();
+  S := S + 'Remove-Item -Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\HA Input Bridge Tray.lnk" -Force -ErrorAction SilentlyContinue' + CRLF();
   S := S + '"@' + CRLF();
   S := S + 'Set-Content -Path $UninstallScript -Value $UninstallContent -Encoding UTF8' + CRLF();
   S := S + CRLF();
@@ -222,25 +185,42 @@ begin
   S := S + 'Get-NetFirewallRule -DisplayName $FirewallRuleName -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue' + CRLF();
   S := S + CRLF();
 
-  S := S + 'New-NetFirewallRule -DisplayName $FirewallRuleName -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow -RemoteAddress $AllowedClientIp | Out-Null' + CRLF();
+  S := S + 'New-NetFirewallRule -DisplayName $FirewallRuleName -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow -RemoteAddress $FirewallRemoteAddress | Out-Null' + CRLF();
   S := S + CRLF();
 
   S := S + '$Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$StartScript`""' + CRLF();
   S := S + '$Trigger = New-ScheduledTaskTrigger -AtLogOn' + CRLF();
   S := S + '$Principal = New-ScheduledTaskPrincipal -UserId $CurrentUser -LogonType Interactive -RunLevel Limited' + CRLF();
   S := S + 'Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Description "HA Input Bridge Windows agent" -Force | Out-Null' + CRLF();
-  S := S + 'Start-ScheduledTask -TaskName $TaskName' + CRLF();
+  S := S + CRLF();
+
+  S := S + 'if ($StartBridgeOnLogin) {' + CRLF();
+  S := S + '  Enable-ScheduledTask -TaskName $TaskName | Out-Null' + CRLF();
+  S := S + '  Start-ScheduledTask -TaskName $TaskName' + CRLF();
+  S := S + '}' + CRLF();
+  S := S + 'else {' + CRLF();
+  S := S + '  Disable-ScheduledTask -TaskName $TaskName | Out-Null' + CRLF();
+  S := S + '}' + CRLF();
+  S := S + CRLF();
+
   S := S + 'Start-Sleep -Seconds 2' + CRLF();
   S := S + CRLF();
 
   S := S + '$Info = @"' + CRLF();
   S := S + 'HA Input Bridge connection details' + CRLF();
   S := S + '' + CRLF();
-  S := S + 'Use these values in Home Assistant:' + CRLF();
+  S := S + 'Home Assistant should discover this bridge automatically in a future release.' + CRLF();
+  S := S + 'For manual setup, use one of the Windows host addresses below.' + CRLF();
   S := S + '' + CRLF();
-  S := S + 'Host: $BindHost' + CRLF();
+  S := S + 'Possible Host values: $HostCandidateText' + CRLF();
   S := S + 'Port: $Port' + CRLF();
   S := S + 'Token: $Token' + CRLF();
+  S := S + '' + CRLF();
+  S := S + 'Bridge bind address:' + CRLF();
+  S := S + '$BindHost' + CRLF();
+  S := S + '' + CRLF();
+  S := S + 'Firewall remote address:' + CRLF();
+  S := S + '$FirewallRemoteAddress' + CRLF();
   S := S + '' + CRLF();
   S := S + 'Tray app:' + CRLF();
   S := S + '$TrayExe' + CRLF();
@@ -251,7 +231,7 @@ begin
   S := S + 'Logs:' + CRLF();
   S := S + '$DataDir' + CRLF();
   S := S + '' + CRLF();
-  S := S + 'Home Assistant setup:' + CRLF();
+  S := S + 'Home Assistant manual setup:' + CRLF();
   S := S + 'Settings -> Devices & services -> Add integration -> HA Input Bridge' + CRLF();
   S := S + '' + CRLF();
   S := S + 'Keep this token private.' + CRLF();
