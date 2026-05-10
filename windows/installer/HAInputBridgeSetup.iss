@@ -147,17 +147,23 @@ begin
   S := S + CRLF();
 
   S := S + '$InstallDir = ' + PsQuote(AppDir) + CRLF();
+  S := S + '$DataDir = Join-Path $env:ProgramData "HA Input Bridge"' + CRLF();
   S := S + '$AgentExe = Join-Path $InstallDir "ha-input-bridge-agent.exe"' + CRLF();
   S := S + '$StartScript = Join-Path $InstallDir "start_ha_input_bridge.ps1"' + CRLF();
   S := S + '$UninstallScript = Join-Path $InstallDir "uninstall-cleanup.ps1"' + CRLF();
   S := S + '$InfoPath = Join-Path $InstallDir "connection-info.txt"' + CRLF();
-  S := S + '$RuntimeLog = Join-Path $InstallDir "task_runtime.log"' + CRLF();
-  S := S + '$BridgeLog = Join-Path $InstallDir "ha_input_bridge.log"' + CRLF();
+  S := S + '$RuntimeLog = Join-Path $DataDir "task_runtime.log"' + CRLF();
+  S := S + '$BridgeLog = Join-Path $DataDir "ha_input_bridge.log"' + CRLF();
   S := S + '$TaskName = "HA Input Bridge"' + CRLF();
   S := S + '$FirewallRuleName = "HA Input Bridge - Home Assistant only"' + CRLF();
   S := S + '$BindHost = ' + PsQuote(BindHost) + CRLF();
   S := S + '$AllowedClientIp = ' + PsQuote(AllowedClientIp) + CRLF();
   S := S + '$Port = ' + Port + CRLF();
+  S := S + '$CurrentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name' + CRLF();
+  S := S + CRLF();
+
+  S := S + 'New-Item -ItemType Directory -Path $DataDir -Force | Out-Null' + CRLF();
+  S := S + '& icacls $DataDir /grant "${CurrentUser}:(OI)(CI)M" /T | Out-Null' + CRLF();
   S := S + CRLF();
 
   S := S + '$TokenBytes = New-Object byte[] 32' + CRLF();
@@ -182,7 +188,8 @@ begin
   S := S + 'Stop-ScheduledTask -TaskName ''HA Input Bridge'' -ErrorAction SilentlyContinue' + CRLF();
   S := S + 'Unregister-ScheduledTask -TaskName ''HA Input Bridge'' -Confirm:`$false -ErrorAction SilentlyContinue' + CRLF();
   S := S + 'Get-NetFirewallRule -DisplayName ''HA Input Bridge - Home Assistant only'' -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue' + CRLF();
-  S := S + 'Get-CimInstance Win32_Process | Where-Object { `$_.CommandLine -like ''*ha-input-bridge-agent.exe*'' -and `$_.CommandLine -like ''*HA Input Bridge*'' } | ForEach-Object { Stop-Process -Id `$_.ProcessId -Force -ErrorAction SilentlyContinue }' + CRLF();
+  S := S + 'Get-CimInstance Win32_Process | Where-Object { `$_.CommandLine -like ''*ha-input-bridge-agent.exe*'' } | ForEach-Object { Stop-Process -Id `$_.ProcessId -Force -ErrorAction SilentlyContinue }' + CRLF();
+  S := S + 'Remove-Item -Path "$env:ProgramData\HA Input Bridge" -Recurse -Force -ErrorAction SilentlyContinue' + CRLF();
   S := S + '"@' + CRLF();
   S := S + 'Set-Content -Path $UninstallScript -Value $UninstallContent -Encoding UTF8' + CRLF();
   S := S + CRLF();
@@ -197,7 +204,7 @@ begin
 
   S := S + '$Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$StartScript`""' + CRLF();
   S := S + '$Trigger = New-ScheduledTaskTrigger -AtLogOn' + CRLF();
-  S := S + '$Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited' + CRLF();
+  S := S + '$Principal = New-ScheduledTaskPrincipal -UserId $CurrentUser -LogonType Interactive -RunLevel Limited' + CRLF();
   S := S + 'Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Description "HA Input Bridge Windows agent" -Force | Out-Null' + CRLF();
   S := S + 'Start-ScheduledTask -TaskName $TaskName' + CRLF();
   S := S + 'Start-Sleep -Seconds 2' + CRLF();
@@ -211,6 +218,9 @@ begin
   S := S + 'Host: $BindHost' + CRLF();
   S := S + 'Port: $Port' + CRLF();
   S := S + 'Token: $Token' + CRLF();
+  S := S + '' + CRLF();
+  S := S + 'Logs:' + CRLF();
+  S := S + '$DataDir' + CRLF();
   S := S + '' + CRLF();
   S := S + 'Home Assistant setup:' + CRLF();
   S := S + 'Settings -> Devices & services -> Add integration -> HA Input Bridge' + CRLF();
