@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import re
@@ -36,6 +37,23 @@ CONNECTION_INFO_NAME = "connection-info.txt"
 UNINSTALL_EXE_NAME = "unins000.exe"
 
 DEFAULT_PORT = 8765
+
+_SINGLE_INSTANCE_MUTEX = None
+
+
+def acquire_single_instance_lock() -> bool:
+    global _SINGLE_INSTANCE_MUTEX
+
+    if os.name != "nt":
+        return True
+
+    kernel32 = ctypes.windll.kernel32
+    mutex = kernel32.CreateMutexW(None, False, "Global\\HAInputBridgeTraySingleInstance")
+    last_error = kernel32.GetLastError()
+
+    _SINGLE_INSTANCE_MUTEX = mutex
+
+    return last_error != 183
 
 
 def get_install_dir() -> Path:
@@ -368,46 +386,30 @@ if ($null -ne $connection) {{
         return None
 
 
-def get_agent_process_id() -> int | None:
-    agent_path = str(get_agent_path()).replace("'", "''")
-
+def is_agent_process(process_id: int) -> bool:
     script = f"""
-$process = Get-CimInstance Win32_Process |
-  Where-Object {{
-    $_.Name -eq '{AGENT_EXE_NAME}' -and
-    (
-      $_.ExecutablePath -eq '{agent_path}' -or
-      $_.CommandLine -like '*{AGENT_EXE_NAME}*'
-    )
-  }} |
-  Select-Object -First 1
+$process = Get-Process -Id {process_id} -ErrorAction SilentlyContinue
 
 if ($null -ne $process) {{
-  Write-Output $process.ProcessId
+  Write-Output $process.ProcessName
 }}
 """
 
     result = run_powershell(script)
 
     if not isinstance(result, subprocess.CompletedProcess):
-        return None
+        return False
 
-    value = result.stdout.strip()
-
-    if not value:
-        return None
-
-    try:
-        return int(value.splitlines()[0].strip())
-    except ValueError:
-        return None
+    return result.stdout.strip().lower() == "ha-input-bridge-agent"
 
 
 def is_bridge_running() -> bool:
     listener_pid = get_listener_process_id()
-    agent_pid = get_agent_process_id()
 
-    return listener_pid is not None and agent_pid is not None and listener_pid == agent_pid
+    if listener_pid is None:
+        return False
+
+    return is_agent_process(listener_pid)
 
 
 def get_status_text() -> str:
@@ -418,6 +420,9 @@ def get_status_text() -> str:
 
 
 def start_bridge() -> bool:
+    if is_bridge_running():
+        return True
+
     script = f"""
 Start-ScheduledTask -TaskName '{TASK_NAME}' -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
@@ -764,6 +769,8 @@ def open_settings_window(icon: pystray.Icon | None = None) -> None:
         write_connection_info(new_config)
         create_or_remove_startup_shortcut(bool(new_config.get("start_tray_on_login", True)))
 
+        status_var.set("Status: applying settings...")
+
         messagebox.showinfo(
             APP_NAME,
             "Windows will ask for administrator permission to apply firewall and startup changes.",
@@ -772,6 +779,7 @@ def open_settings_window(icon: pystray.Icon | None = None) -> None:
         def worker() -> None:
             apply_system_settings_elevated(new_config)
             root.after(0, refresh_status)
+
             if icon is not None:
                 notify(icon, "Settings saved and bridge restarted.")
 
@@ -889,6 +897,9 @@ def build_menu() -> pystray.Menu:
 
 
 def main() -> None:
+    if not acquire_single_instance_lock():
+        return
+
     running = is_bridge_running()
 
     icon = pystray.Icon(
