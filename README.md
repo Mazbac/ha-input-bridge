@@ -18,7 +18,7 @@ Home Assistant
 → Windows mouse and keyboard input
 ```
 
-The default user interface is:
+Default user interface:
 
 ```text
 Home Assistant sidebar
@@ -39,19 +39,20 @@ Included:
 - Automatic sidebar panel: `PC Trackpad`
 - Bundled mobile-first trackpad UI
 - Home Assistant actions/services
-- Windows bridge agent
-- Windows PowerShell installer
-- Windows PowerShell uninstaller
+- Windows one-click installer
+- Windows background agent
+- Windows Firewall rule creation
+- Windows Scheduled Task startup
 - Token-based authentication
 - Home Assistant IP allowlist
-- Windows Firewall rule creation
-- Windows Scheduled Task creation
+- Runtime logs in `C:\ProgramData\HA Input Bridge`
 - HACS validation workflow
 - Hassfest validation workflow
+- Windows installer build workflow
 
 Not yet included:
 
-- Signed Windows executable
+- Code-signed Windows installer
 - Multi-PC selector in the trackpad UI
 - Health sensor
 - Position sensor
@@ -71,14 +72,14 @@ Not yet included:
 ### Windows side
 
 - Windows PC
-- PowerShell
-- Administrator access
-- Python 3 installed
+- Administrator access during installation
 - LAN or VPN/Tailscale connectivity between Home Assistant and the Windows PC
+
+Python is not required for normal users when using the Windows installer release asset.
 
 ---
 
-## Installation overview
+## Recommended installation flow
 
 Installation has two parts:
 
@@ -95,58 +96,63 @@ The Home Assistant integration must be installed in Home Assistant.
 
 ## 1. Install the Windows bridge
 
-Download this repository from GitHub as a ZIP file and extract it on the Windows PC.
+Go to the latest GitHub release:
 
-Open **PowerShell as Administrator**.
-
-Go to the extracted `windows` folder.
-
-Example:
-
-```powershell
-Set-Location "$env:USERPROFILE\Downloads\ha-input-bridge-main\windows"
+```text
+https://github.com/Mazbac/ha-input-bridge/releases
 ```
 
-If PowerShell blocks local script execution, allow scripts for this PowerShell session only:
+Download this release asset:
 
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```text
+HA-Input-Bridge-Setup.exe
 ```
 
-Run the installer:
+Run it on the Windows PC you want to control.
 
-```powershell
-.\install.ps1
+Because the installer is not code-signed yet, Windows SmartScreen may show a warning.
+
+If you see:
+
+```text
+Windows protected your PC
 ```
+
+Click:
+
+```text
+More info → Run anyway
+```
+
+Approve the Windows administrator prompt.
 
 The installer asks for:
 
 ```text
-Windows PC IP to bind to
-Home Assistant IP allowed to connect
+Windows PC IP address to listen on
+Home Assistant IP address allowed to connect
+Bridge port
 ```
 
-Generic example:
+Generic LAN example:
 
 ```text
 Windows PC IP:     192.168.1.50
 Home Assistant IP: 192.168.1.10
+Bridge port:       8765
 ```
 
 The installer will:
 
-- Create `C:\ha-input-bridge`
-- Copy the Windows bridge files
-- Create a Python virtual environment
-- Install Python requirements
+- Install the agent to `C:\Program Files\HA Input Bridge`
+- Create runtime/log storage in `C:\ProgramData\HA Input Bridge`
 - Generate a random bridge token
-- Create `start_ha_input_bridge.ps1`
 - Create a Windows Scheduled Task named `HA Input Bridge`
 - Create a Windows Firewall rule named `HA Input Bridge - Home Assistant only`
-- Start the bridge
-- Print the Host, Port, and Token for Home Assistant setup
+- Start the bridge agent in the background
+- Open a connection-info file containing Host, Port, and Token
 
-At the end, the installer prints values like:
+At the end, save these values:
 
 ```text
 Host:  <WINDOWS_PC_IP_OR_HOSTNAME>
@@ -154,13 +160,41 @@ Port:  8765
 Token: <BRIDGE_TOKEN>
 ```
 
-Save these values.
-
 Do not publish the token.
 
 ---
 
-## 2. Install the Home Assistant integration through HACS
+## 2. Verify the Windows bridge is running
+
+On Windows, open PowerShell and run:
+
+```powershell
+Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue |
+  Format-List LocalAddress,LocalPort,State,OwningProcess
+
+$owner = (Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue).OwningProcess
+
+Get-Process -Id $owner -ErrorAction SilentlyContinue |
+  Format-List Id,ProcessName,Path
+```
+
+Expected result:
+
+```text
+LocalAddress  : <WINDOWS_PC_IP_OR_HOSTNAME>
+LocalPort     : 8765
+State         : Listen
+OwningProcess : <PROCESS_ID>
+
+ProcessName : ha-input-bridge-agent
+Path        : C:\Program Files\HA Input Bridge\ha-input-bridge-agent.exe
+```
+
+The Scheduled Task may show `Ready`. That is normal if the task started the background agent successfully.
+
+---
+
+## 3. Install the Home Assistant integration through HACS
 
 In Home Assistant:
 
@@ -185,14 +219,14 @@ Integration
 
 ---
 
-## 3. Add the integration in Home Assistant
+## 4. Add the integration in Home Assistant
 
 In Home Assistant:
 
 1. Go to **Settings → Devices & services**.
 2. Click **Add integration**.
 3. Search for **HA Input Bridge**.
-4. Enter the Windows bridge details.
+4. Enter the Windows bridge details from the installer.
 
 Fields:
 
@@ -225,7 +259,7 @@ Do not use real tokens in screenshots, issues, documentation, or public logs.
 
 ---
 
-## 4. Use the sidebar panel
+## 5. Use the sidebar panel
 
 After the integration is installed and configured, Home Assistant adds this sidebar item automatically:
 
@@ -301,6 +335,8 @@ ha_input_bridge.hotkey
 ```
 
 The bridge must be armed before input actions are accepted.
+
+The sidebar panel handles arming automatically.
 
 ---
 
@@ -432,31 +468,41 @@ data:
 
 ---
 
-## Windows bridge details
+## Windows installation details
 
-Source files:
+Normal users should install the Windows bridge with:
 
 ```text
-windows/ha_input_bridge.py
-windows/install.ps1
-windows/uninstall.ps1
-windows/requirements.txt
+HA-Input-Bridge-Setup.exe
 ```
 
-Default installed location:
+Installed application folder:
 
 ```text
-C:\ha-input-bridge
+C:\Program Files\HA Input Bridge
+```
+
+Runtime data and logs:
+
+```text
+C:\ProgramData\HA Input Bridge
 ```
 
 Installed files include:
 
 ```text
-C:\ha-input-bridge\ha_input_bridge.py
-C:\ha-input-bridge\requirements.txt
-C:\ha-input-bridge\start_ha_input_bridge.ps1
-C:\ha-input-bridge\task_runtime.log
-C:\ha-input-bridge\ha_input_bridge.log
+C:\Program Files\HA Input Bridge\ha-input-bridge-agent.exe
+C:\Program Files\HA Input Bridge\connection-info.txt
+C:\Program Files\HA Input Bridge\start_ha_input_bridge.ps1
+C:\Program Files\HA Input Bridge\install-service.ps1
+C:\Program Files\HA Input Bridge\uninstall-cleanup.ps1
+```
+
+Runtime logs:
+
+```text
+C:\ProgramData\HA Input Bridge\task_runtime.log
+C:\ProgramData\HA Input Bridge\ha_input_bridge.log
 ```
 
 Default port:
@@ -481,22 +527,60 @@ HA Input Bridge - Home Assistant only
 
 ## Uninstall the Windows bridge
 
-Open **PowerShell as Administrator**.
+Use Windows Settings:
 
-Go to the extracted `windows` folder.
-
-Run:
-
-```powershell
-.\uninstall.ps1
+```text
+Settings → Apps → Installed apps → HA Input Bridge → Uninstall
 ```
 
 The uninstaller removes:
 
+- Installed application files
 - Scheduled Task
 - Windows Firewall rule
-- Running bridge process from the install directory
-- `C:\ha-input-bridge`
+- Running bridge process
+- Runtime logs in `C:\ProgramData\HA Input Bridge`
+
+Manual cleanup, if needed:
+
+```powershell
+Stop-ScheduledTask -TaskName "HA Input Bridge" -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName "HA Input Bridge" -Confirm:$false -ErrorAction SilentlyContinue
+
+Get-NetFirewallRule -DisplayName "HA Input Bridge - Home Assistant only" -ErrorAction SilentlyContinue |
+  Remove-NetFirewallRule -ErrorAction SilentlyContinue
+
+Get-CimInstance Win32_Process |
+  Where-Object {
+    $_.CommandLine -like "*ha-input-bridge-agent.exe*" -or
+    $_.CommandLine -like "*HA Input Bridge*"
+  } |
+  ForEach-Object {
+    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+  }
+
+Remove-Item -Path "$env:ProgramFiles\HA Input Bridge" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path "$env:ProgramData\HA Input Bridge" -Recurse -Force -ErrorAction SilentlyContinue
+```
+
+---
+
+## Advanced manual Windows install
+
+The repository still contains PowerShell scripts in:
+
+```text
+windows/install.ps1
+windows/uninstall.ps1
+```
+
+These are for development and manual testing.
+
+Normal users should use:
+
+```text
+HA-Input-Bridge-Setup.exe
+```
 
 ---
 
@@ -594,105 +678,76 @@ Check that this frontend file loads:
 
 ---
 
+### Windows bridge is not listening
+
+Run this on Windows:
+
+```powershell
+Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue |
+  Format-List LocalAddress,LocalPort,State,OwningProcess
+```
+
+If there is no output, check logs:
+
+```powershell
+Get-Content "$env:ProgramData\HA Input Bridge\task_runtime.log" -Tail 120 -ErrorAction SilentlyContinue
+Get-Content "$env:ProgramData\HA Input Bridge\ha_input_bridge.log" -Tail 120 -ErrorAction SilentlyContinue
+```
+
+Check the scheduled task:
+
+```powershell
+Get-ScheduledTask -TaskName "HA Input Bridge" | Format-List TaskName,State
+Get-ScheduledTaskInfo -TaskName "HA Input Bridge" |
+  Format-List LastRunTime,LastTaskResult,NextRunTime,NumberOfMissedRuns
+```
+
+---
+
+### Windows bridge process is running but Home Assistant cannot connect
+
+Check the listener:
+
+```powershell
+Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue |
+  Format-List LocalAddress,LocalPort,State,OwningProcess
+```
+
+Check the firewall rule:
+
+```powershell
+Get-NetFirewallRule -DisplayName "HA Input Bridge - Home Assistant only" |
+  Format-List DisplayName,Enabled,Direction,Action
+
+Get-NetFirewallPortFilter -AssociatedNetFirewallRule (
+  Get-NetFirewallRule -DisplayName "HA Input Bridge - Home Assistant only"
+) |
+  Format-List Protocol,LocalPort
+
+Get-NetFirewallAddressFilter -AssociatedNetFirewallRule (
+  Get-NetFirewallRule -DisplayName "HA Input Bridge - Home Assistant only"
+) |
+  Format-List RemoteAddress
+```
+
+The Home Assistant IP must match the allowed remote address.
+
+---
+
 ### Trackpad shows errors while moving
 
 Check the Windows bridge logs:
 
 ```powershell
-Get-Content C:\ha-input-bridge\ha_input_bridge.log -Tail 120
-Get-Content C:\ha-input-bridge\task_runtime.log -Tail 120
+Get-Content "$env:ProgramData\HA Input Bridge\ha_input_bridge.log" -Tail 120 -ErrorAction SilentlyContinue
+Get-Content "$env:ProgramData\HA Input Bridge\task_runtime.log" -Tail 120 -ErrorAction SilentlyContinue
 ```
 
-Check that the bridge is listening:
+Then confirm the bridge is still listening:
 
 ```powershell
-Get-NetTCPConnection -LocalPort 8765 -State Listen
+Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue
 ```
-
----
-
-### Windows bridge is not listening
-
-Check the scheduled task:
-
-```powershell
-Get-ScheduledTask -TaskName "HA Input Bridge" | Select-Object TaskName, State
-Get-ScheduledTaskInfo -TaskName "HA Input Bridge"
-```
-
-Check for Python or PowerShell processes:
-
-```powershell
-Get-Process python,pythonw,powershell -ErrorAction SilentlyContinue |
-  Select-Object Id, ProcessName, Path
-```
-
-Check runtime logs:
-
-```powershell
-Get-Content C:\ha-input-bridge\task_runtime.log -Tail 120
-Get-Content C:\ha-input-bridge\ha_input_bridge.log -Tail 120
-```
-
----
-
-### Manual Windows bridge syntax check
-
-Do not double-click the `.py` file.
-
-Run:
-
-```powershell
-C:\ha-input-bridge\.venv\Scripts\python.exe -m py_compile C:\ha-input-bridge\ha_input_bridge.py
-```
-
-Normal operation should use the Scheduled Task created by the installer.
-
-Manual debugging requires the environment variables from `start_ha_input_bridge.ps1`.
-
----
-
-### Reinstall the Windows bridge
-
-Open **PowerShell as Administrator** in the `windows` folder.
-
-Run:
-
-```powershell
-.\uninstall.ps1
-```
-
-Then run:
-
-```powershell
-.\install.ps1
-```
-
----
-
-### Home Assistant cannot connect to the bridge
-
-Check these values:
-
-```text
-Host: Windows PC IP or hostname
-Port: 8765
-Token: exact token from installer
-```
-
-On Windows, confirm the bridge is listening:
-
-```powershell
-Get-NetTCPConnection -LocalPort 8765 -State Listen
-```
-
-Confirm the firewall rule exists:
-
-```powershell
-Get-NetFirewallRule -DisplayName "HA Input Bridge - Home Assistant only"
-```
-
-Confirm Home Assistant is using the IP address allowed during installation.
 
 ---
 
@@ -700,14 +755,11 @@ Confirm Home Assistant is using the IP address allowed during installation.
 
 Uninstall and reinstall the Windows bridge.
 
-```powershell
-.\uninstall.ps1
-.\install.ps1
-```
-
 The installer generates a new token.
 
 Then update the Home Assistant integration with the new token.
+
+Do not reuse an exposed token.
 
 ---
 
@@ -732,16 +784,47 @@ ha-input-bridge/
 │  ├─ ha_input_bridge.py
 │  ├─ install.ps1
 │  ├─ requirements.txt
-│  └─ uninstall.ps1
+│  ├─ uninstall.ps1
+│  └─ installer/
+│     ├─ build.ps1
+│     ├─ ha-input-bridge-agent.spec
+│     └─ HAInputBridgeSetup.iss
 ├─ .github/
 │  └─ workflows/
 │     ├─ hacs.yaml
-│     └─ hassfest.yaml
+│     ├─ hassfest.yaml
+│     └─ windows-installer.yaml
 ├─ hacs.json
 ├─ README.md
 ├─ SECURITY.md
+├─ .gitignore
 └─ LICENSE
 ```
+
+---
+
+## Development
+
+Build the Windows installer locally from Windows:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\windows\installer\build.ps1
+```
+
+Build output:
+
+```text
+windows\installer\dist\HA-Input-Bridge-Setup.exe
+```
+
+The GitHub Actions workflow also builds the installer:
+
+```text
+Actions → Windows Installer
+```
+
+When a tag like `v0.2.0` is built, the workflow attaches the installer to the matching GitHub release.
 
 ---
 
@@ -749,8 +832,9 @@ ha-input-bridge/
 
 Planned improvements:
 
-- Signed Windows executable
-- Easier release packaging for Windows files
+- Code-signed Windows installer
+- Better Windows installer UI
+- Automatic IP address selection helper
 - Multi-PC selector in the trackpad UI
 - Better multi-bridge support in Home Assistant actions
 - Health sensor
