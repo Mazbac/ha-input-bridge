@@ -9,9 +9,12 @@ $PythonExe = Join-Path $VenvDir "Scripts\python.exe"
 $PipExe = Join-Path $VenvDir "Scripts\pip.exe"
 $PyInstallerExe = Join-Path $VenvDir "Scripts\pyinstaller.exe"
 
-$SpecFile = Join-Path $InstallerDir "ha-input-bridge-agent.spec"
+$AgentSpecFile = Join-Path $InstallerDir "ha-input-bridge-agent.spec"
+$TraySpecFile = Join-Path $InstallerDir "ha-input-bridge-tray.spec"
 $InnoScript = Join-Path $InstallerDir "HAInputBridgeSetup.iss"
+
 $AgentDistExe = Join-Path $InstallerDir "dist\ha-input-bridge-agent.exe"
+$TrayDistExe = Join-Path $InstallerDir "dist\ha-input-bridge-tray.exe"
 $SetupExe = Join-Path $InstallerDir "dist\HA-Input-Bridge-Setup.exe"
 
 Write-Host ""
@@ -25,8 +28,16 @@ if (-not (Test-Path (Join-Path $WindowsDir "ha_input_bridge.py"))) {
     throw "Missing windows\ha_input_bridge.py"
 }
 
-if (-not (Test-Path $SpecFile)) {
-    throw "Missing $SpecFile"
+if (-not (Test-Path (Join-Path $WindowsDir "ha_input_bridge_tray.py"))) {
+    throw "Missing windows\ha_input_bridge_tray.py"
+}
+
+if (-not (Test-Path $AgentSpecFile)) {
+    throw "Missing $AgentSpecFile"
+}
+
+if (-not (Test-Path $TraySpecFile)) {
+    throw "Missing $TraySpecFile"
 }
 
 if (-not (Test-Path $InnoScript)) {
@@ -54,7 +65,7 @@ Write-Host "Upgrading pip..."
 & $PythonExe -m pip install --upgrade pip
 
 Write-Host "Installing build dependencies..."
-& $PipExe install pyinstaller flask waitress pyautogui
+& $PipExe install pyinstaller flask waitress pyautogui pystray pillow
 
 Write-Host "Cleaning old build output..."
 Remove-Item -Path (Join-Path $InstallerDir "build") -Recurse -Force -ErrorAction SilentlyContinue
@@ -63,7 +74,7 @@ Remove-Item -Path (Join-Path $InstallerDir "dist") -Recurse -Force -ErrorAction 
 Write-Host "Building agent executable with PyInstaller..."
 Push-Location $InstallerDir
 try {
-    & $PyInstallerExe --clean --noconfirm $SpecFile
+    & $PyInstallerExe --clean --noconfirm $AgentSpecFile
 }
 finally {
     Pop-Location
@@ -75,6 +86,22 @@ if (-not (Test-Path $AgentDistExe)) {
 
 Write-Host "Agent built:"
 Write-Host $AgentDistExe
+
+Write-Host "Building tray executable with PyInstaller..."
+Push-Location $InstallerDir
+try {
+    & $PyInstallerExe --clean --noconfirm $TraySpecFile
+}
+finally {
+    Pop-Location
+}
+
+if (-not (Test-Path $TrayDistExe)) {
+    throw "PyInstaller did not create $TrayDistExe"
+}
+
+Write-Host "Tray app built:"
+Write-Host $TrayDistExe
 
 $IsccExe = $null
 $IsccCommand = Get-Command ISCC.exe -ErrorAction SilentlyContinue
