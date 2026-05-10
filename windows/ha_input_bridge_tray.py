@@ -51,11 +51,37 @@ def acquire_single_instance_lock() -> bool:
     if os.name != "nt":
         return True
 
+    current_pid = os.getpid()
+
+    cleanup_script = f"""
+Get-CimInstance Win32_Process |
+  Where-Object {{
+    $_.Name -eq '{TRAY_EXE_NAME}' -and
+    $_.ProcessId -ne {current_pid} -and
+    $_.CommandLine -notlike '*--settings*'
+  }} |
+  ForEach-Object {{
+    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+  }}
+"""
+
+    try:
+        run_powershell(cleanup_script)
+    except Exception:
+        pass
+
     kernel32 = ctypes.windll.kernel32
-    mutex = kernel32.CreateMutexW(None, False, "Global\\HAInputBridgeTraySingleInstance")
+    kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
+    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    kernel32.GetLastError.restype = ctypes.c_ulong
+
+    mutex = kernel32.CreateMutexW(None, True, "Local\\HAInputBridgeTraySingleInstance")
     last_error = kernel32.GetLastError()
 
     _SINGLE_INSTANCE_MUTEX = mutex
+
+    if not mutex:
+        return True
 
     return last_error != 183
 
