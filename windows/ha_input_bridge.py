@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 import pyautogui
@@ -12,14 +14,9 @@ from waitress import serve
 
 APP_NAME = "ha-input-bridge"
 
-DEFAULT_INSTALL_DIR = r"C:\ha-input-bridge"
-DEFAULT_LOG_FILE = os.path.join(DEFAULT_INSTALL_DIR, "ha_input_bridge.log")
-
-TOKEN = os.environ.get("HA_INPUT_TOKEN", "")
-ALLOWED_CLIENT_IP = os.environ.get("HA_ALLOWED_CLIENT_IP", "")
-BIND_HOST = os.environ.get("HA_INPUT_BIND_HOST", "127.0.0.1")
-PORT = int(os.environ.get("HA_INPUT_PORT", "8765"))
-LOG_FILE = os.environ.get("HA_INPUT_LOG_FILE", DEFAULT_LOG_FILE)
+DEFAULT_DATA_DIR = Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "HA Input Bridge"
+DEFAULT_CONFIG_FILE = DEFAULT_DATA_DIR / "config.json"
+DEFAULT_LOG_FILE = DEFAULT_DATA_DIR / "ha_input_bridge.log"
 
 SAFE_MARGIN = 2
 MAX_ABSOLUTE_XY = 10000
@@ -91,14 +88,63 @@ pyautogui.FAILSAFE = False
 pyautogui.PAUSE = 0.01
 
 
-def setup_logging() -> None:
-    log_dir = os.path.dirname(LOG_FILE)
+def load_config() -> dict[str, Any]:
+    config_path = Path(os.environ.get("HA_INPUT_CONFIG_FILE", str(DEFAULT_CONFIG_FILE)))
 
-    if log_dir:
-        os.makedirs(log_dir, exist_ok=True)
+    if not config_path.exists():
+        return {}
+
+    try:
+        with config_path.open("r", encoding="utf-8") as file:
+            data = json.load(file)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+    if not isinstance(data, dict):
+        return {}
+
+    return data
+
+
+CONFIG = load_config()
+
+
+def config_value(name: str, env_name: str, default: Any = "") -> Any:
+    value = CONFIG.get(name)
+
+    if value not in (None, ""):
+        return value
+
+    value = os.environ.get(env_name)
+
+    if value not in (None, ""):
+        return value
+
+    return default
+
+
+def config_int(name: str, env_name: str, default: int) -> int:
+    value = config_value(name, env_name, default)
+
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+TOKEN = str(config_value("token", "HA_INPUT_TOKEN", ""))
+ALLOWED_CLIENT_IP = str(config_value("allowed_client_ip", "HA_ALLOWED_CLIENT_IP", ""))
+BIND_HOST = str(config_value("bind_host", "HA_INPUT_BIND_HOST", "127.0.0.1"))
+PORT = config_int("port", "HA_INPUT_PORT", 8765)
+LOG_FILE = str(config_value("log_file", "HA_INPUT_LOG_FILE", str(DEFAULT_LOG_FILE)))
+
+
+def setup_logging() -> None:
+    log_file = Path(LOG_FILE)
+    log_file.parent.mkdir(parents=True, exist_ok=True)
 
     logging.basicConfig(
-        filename=LOG_FILE,
+        filename=str(log_file),
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
     )
@@ -106,7 +152,10 @@ def setup_logging() -> None:
 
 def validate_startup_config() -> None:
     if not TOKEN:
-        raise RuntimeError("Missing HA_INPUT_TOKEN environment variable")
+        raise RuntimeError("Missing token. Set config.json token or HA_INPUT_TOKEN.")
+
+    if PORT < 1 or PORT > 65535:
+        raise RuntimeError("Invalid port. Use a value between 1 and 65535.")
 
 
 def clamp(value: int | float, low: int | float, high: int | float) -> int | float:
