@@ -76,9 +76,19 @@ if (-not (Test-Path $AgentDistExe)) {
 Write-Host "Agent built:"
 Write-Host $AgentDistExe
 
+$IsccExe = $null
 $IsccCommand = Get-Command ISCC.exe -ErrorAction SilentlyContinue
 
-if (-not $IsccCommand) {
+if ($IsccCommand) {
+    if ($IsccCommand.Source) {
+        $IsccExe = $IsccCommand.Source
+    }
+    elseif ($IsccCommand.Path) {
+        $IsccExe = $IsccCommand.Path
+    }
+}
+
+if (-not $IsccExe) {
     $CandidatePaths = @(
         "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
         "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
@@ -88,20 +98,23 @@ if (-not $IsccCommand) {
 
     foreach ($CandidatePath in $CandidatePaths) {
         if ($CandidatePath -and (Test-Path $CandidatePath)) {
-            $IsccCommand = Get-Item $CandidatePath
+            $IsccExe = $CandidatePath
             break
         }
     }
 }
 
-if (-not $IsccCommand) {
+if (-not $IsccExe) {
     throw "Inno Setup compiler ISCC.exe was not found. Install Inno Setup 6 or 7 first."
 }
+
+Write-Host "Using Inno Setup compiler:"
+Write-Host $IsccExe
 
 Write-Host "Compiling installer with Inno Setup..."
 Push-Location $InstallerDir
 try {
-    & $IsccCommand.FullName $InnoScript
+    & $IsccExe $InnoScript
 }
 finally {
     Pop-Location
