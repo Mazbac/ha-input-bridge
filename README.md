@@ -2,49 +2,13 @@
 
 Home Assistant custom integration for controlling a Windows PC through a local input bridge.
 
-HA Input Bridge adds a sidebar trackpad panel to Home Assistant and exposes services for mouse movement, clicks, scrolling, keyboard input, and hotkeys.
+HA Input Bridge adds a **PC Trackpad** sidebar panel to Home Assistant and exposes Home Assistant actions for mouse movement, clicks, scrolling, keyboard input, and hotkeys.
 
-## Status
+> Experimental project. Treat this as remote-control software.
 
-Experimental.
+---
 
-The current release includes:
-
-- Home Assistant custom integration
-- UI config flow
-- Automatic sidebar panel: **PC Trackpad**
-- Bundled mobile-first trackpad UI
-- Home Assistant services/actions
-- Windows bridge agent
-- Windows installer script
-- Windows uninstaller script
-- HACS validation workflow
-- Hassfest validation workflow
-
-This project is usable for testing. Treat it as remote-control software and secure it accordingly.
-
-## What this project includes
-
-- Home Assistant custom integration
-- HACS installation support
-- UI setup flow
-- Automatic sidebar panel
-- Bundled dashboard card JavaScript
-- Mouse movement support
-- Mouse click support
-- Mouse scroll support
-- Keyboard typing support
-- Key press support
-- Hotkey support
-- Windows bridge agent
-- PowerShell installer
-- PowerShell uninstaller
-- Token-based authentication
-- Home Assistant IP allowlist
-- Windows Firewall rule creation
-- Windows Scheduled Task creation
-
-## Architecture
+## What it does
 
 ```text
 Home Assistant
@@ -54,14 +18,47 @@ Home Assistant
 → Windows mouse and keyboard input
 ```
 
-Sidebar UI:
+The default user interface is:
 
 ```text
 Home Assistant sidebar
 → PC Trackpad
-→ ha_input_bridge services
-→ Windows bridge
 ```
+
+No dashboard resource is required for the default sidebar experience.
+
+---
+
+## Current status
+
+Included:
+
+- Home Assistant custom integration
+- HACS installation support
+- UI config flow
+- Automatic sidebar panel: `PC Trackpad`
+- Bundled mobile-first trackpad UI
+- Home Assistant actions/services
+- Windows bridge agent
+- Windows PowerShell installer
+- Windows PowerShell uninstaller
+- Token-based authentication
+- Home Assistant IP allowlist
+- Windows Firewall rule creation
+- Windows Scheduled Task creation
+- HACS validation workflow
+- Hassfest validation workflow
+
+Not yet included:
+
+- Signed Windows executable
+- Multi-PC selector in the trackpad UI
+- Health sensor
+- Position sensor
+- Diagnostics panel
+- Full multi-bridge action targeting
+
+---
 
 ## Requirements
 
@@ -75,13 +72,15 @@ Home Assistant sidebar
 
 - Windows PC
 - PowerShell
-- Administrator access for installation
+- Administrator access
 - Python 3 installed
-- LAN or VPN/Tailscale connectivity to Home Assistant
+- LAN or VPN/Tailscale connectivity between Home Assistant and the Windows PC
+
+---
 
 ## Installation overview
 
-Install has two parts:
+Installation has two parts:
 
 ```text
 1. Install the Windows bridge on the Windows PC.
@@ -92,26 +91,42 @@ The Windows bridge must be installed on the PC you want to control.
 
 The Home Assistant integration must be installed in Home Assistant.
 
-## Windows bridge installation
+---
 
-Download the repository as a ZIP file from GitHub and extract it.
+## 1. Install the Windows bridge
 
-Open PowerShell as Administrator in the `windows` folder.
+Download this repository from GitHub as a ZIP file and extract it on the Windows PC.
 
-Run:
+Open **PowerShell as Administrator**.
+
+Go to the extracted `windows` folder.
+
+Example:
+
+```powershell
+Set-Location "$env:USERPROFILE\Downloads\ha-input-bridge-main\windows"
+```
+
+If PowerShell blocks local script execution, allow scripts for this PowerShell session only:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+Run the installer:
 
 ```powershell
 .\install.ps1
 ```
 
-The installer will ask for:
+The installer asks for:
 
 ```text
 Windows PC IP to bind to
 Home Assistant IP allowed to connect
 ```
 
-Example values:
+Generic example:
 
 ```text
 Windows PC IP:     192.168.1.50
@@ -126,61 +141,67 @@ The installer will:
 - Install Python requirements
 - Generate a random bridge token
 - Create `start_ha_input_bridge.ps1`
-- Create a Windows Scheduled Task
-- Create a Windows Firewall rule
+- Create a Windows Scheduled Task named `HA Input Bridge`
+- Create a Windows Firewall rule named `HA Input Bridge - Home Assistant only`
 - Start the bridge
 - Print the Host, Port, and Token for Home Assistant setup
 
 At the end, the installer prints values like:
 
 ```text
-Host:  <WINDOWS_PC_IP>
+Host:  <WINDOWS_PC_IP_OR_HOSTNAME>
 Port:  8765
 Token: <BRIDGE_TOKEN>
 ```
 
-Keep the token private.
+Save these values.
 
-## Windows bridge uninstall
+Do not publish the token.
 
-Open PowerShell as Administrator in the `windows` folder.
+---
 
-Run:
+## 2. Install the Home Assistant integration through HACS
 
-```powershell
-.\uninstall.ps1
-```
+In Home Assistant:
 
-The uninstaller removes:
-
-- Scheduled Task
-- Firewall rule
-- Running bridge process
-- `C:\ha-input-bridge`
-
-## Home Assistant installation through HACS
-
-1. Open HACS.
+1. Open **HACS**.
 2. Open the three-dot menu.
 3. Select **Custom repositories**.
-4. Add this repository URL.
-5. Select category **Integration**.
-6. Install **HA Input Bridge**.
-7. Restart Home Assistant.
-8. Go to **Settings → Devices & services → Add integration**.
-9. Search for **HA Input Bridge**.
-10. Enter the Windows PC host, port, token, and display name.
+4. Add this repository:
 
-## Home Assistant configuration
+```text
+https://github.com/Mazbac/ha-input-bridge
+```
 
-The setup flow asks for:
+5. Select category:
 
-| Field | Description |
+```text
+Integration
+```
+
+6. Click **Add**.
+7. Install **HA Input Bridge**.
+8. Restart Home Assistant.
+
+---
+
+## 3. Add the integration in Home Assistant
+
+In Home Assistant:
+
+1. Go to **Settings → Devices & services**.
+2. Click **Add integration**.
+3. Search for **HA Input Bridge**.
+4. Enter the Windows bridge details.
+
+Fields:
+
+| Field | Value |
 | --- | --- |
-| Name | Display name for this bridge |
-| Host | IP address or hostname of the Windows PC |
+| Name | Display name for this Windows PC |
+| Host | Windows PC IP address or hostname |
 | Port | Bridge port, default `8765` |
-| Token | Secret token generated by the Windows installer |
+| Token | Token generated by the Windows installer |
 
 Example:
 
@@ -191,7 +212,7 @@ Port: 8765
 Token: <BRIDGE_TOKEN>
 ```
 
-Example using generic private LAN addresses:
+Generic LAN example:
 
 ```text
 Name: Office PC
@@ -200,37 +221,50 @@ Port: 8765
 Token: <BRIDGE_TOKEN>
 ```
 
-Do not publish your real token.
+Do not use real tokens in screenshots, issues, documentation, or public logs.
 
-## Sidebar panel
+---
 
-After installation and setup, Home Assistant adds this sidebar item automatically:
+## 4. Use the sidebar panel
+
+After the integration is installed and configured, Home Assistant adds this sidebar item automatically:
 
 ```text
 PC Trackpad
 ```
 
-This opens the bundled trackpad UI.
+Open it from the Home Assistant sidebar.
 
-You do not need to add a dashboard resource manually for the default sidebar experience.
+Default trackpad behavior:
 
-## Dashboard card
+| Gesture / control | Action |
+| --- | --- |
+| One-finger move | Move mouse |
+| One-finger tap | Left click |
+| Two-finger drag | Scroll |
+| Two-finger tap | Right click |
+| Three-finger tap | Middle click |
+| Keyboard panel | Type into active Windows window |
+| Enter / Backspace / Delete | Send key presses |
+| Hotkey buttons | Send predefined key combinations |
 
-The integration also serves the bundled dashboard card JavaScript from:
+The Windows window that currently has focus receives keyboard input.
+
+---
+
+## Dashboard card usage
+
+The sidebar panel is the default interface.
+
+Manual dashboard usage is optional.
+
+The integration serves the bundled dashboard card from:
 
 ```text
 /ha_input_bridge/pc-trackpad-card.js
 ```
 
-Manual dashboard usage is optional. The main user experience is the automatic sidebar panel.
-
-Example dashboard card:
-
-```yaml
-type: custom:pc-trackpad-card
-```
-
-If you use the card manually, add this resource first:
+If you want to use the card manually in a dashboard, add this dashboard resource:
 
 ```text
 /ha_input_bridge/pc-trackpad-card.js
@@ -242,9 +276,17 @@ Resource type:
 JavaScript module
 ```
 
-## Services
+Example Lovelace card:
 
-After setup, this integration provides these Home Assistant services:
+```yaml
+type: custom:pc-trackpad-card
+```
+
+---
+
+## Available Home Assistant actions
+
+After setup, this integration provides:
 
 ```text
 ha_input_bridge.arm
@@ -258,7 +300,11 @@ ha_input_bridge.press
 ha_input_bridge.hotkey
 ```
 
-## Example service calls
+The bridge must be armed before input actions are accepted.
+
+---
+
+## Example action calls
 
 ### Arm bridge
 
@@ -303,6 +349,14 @@ data:
   clicks: 1
 ```
 
+Valid buttons:
+
+```text
+left
+right
+middle
+```
+
 ### Scroll
 
 ```yaml
@@ -310,6 +364,10 @@ action: ha_input_bridge.scroll
 data:
   amount: -10
 ```
+
+Negative values usually scroll down.
+
+Positive values usually scroll up.
 
 ### Write text
 
@@ -327,6 +385,23 @@ data:
   key: enter
 ```
 
+Common keys:
+
+```text
+enter
+esc
+tab
+space
+left
+right
+up
+down
+backspace
+delete
+home
+end
+```
+
 ### Hotkey
 
 ```yaml
@@ -337,52 +412,29 @@ data:
     - l
 ```
 
-## Security warning
+Other examples:
 
-This project controls mouse and keyboard input on a Windows PC.
-
-Do not expose the Windows bridge directly to the internet.
-
-Recommended safeguards:
-
-- Use a strong random token.
-- Bind the Windows bridge only to LAN or Tailscale.
-- Restrict Windows Firewall to the Home Assistant IP.
-- Keep the arm-before-input safety model enabled.
-- Do not log typed text.
-- Do not publish your token.
-- Do not publish your personal network details in issues.
-- Do not use this on shared or untrusted networks.
-- Do not port-forward this bridge.
-- Do not expose it through a public reverse proxy.
-
-## Recommended network layout
-
-```text
-Home Assistant LAN IP → allowed to call Windows bridge
-Other clients → blocked by firewall or rejected by allowlist
-Internet → no access
+```yaml
+action: ha_input_bridge.hotkey
+data:
+  keys:
+    - ctrl
+    - c
 ```
 
-Generic example:
-
-```text
-Windows PC:       192.168.1.50
-Home Assistant:   192.168.1.10
-Bridge port:      8765
+```yaml
+action: ha_input_bridge.hotkey
+data:
+  keys:
+    - alt
+    - tab
 ```
 
-These are example addresses only.
+---
 
-## Windows bridge files
+## Windows bridge details
 
-The Windows bridge source is in:
-
-```text
-windows/
-```
-
-Files:
+Source files:
 
 ```text
 windows/ha_input_bridge.py
@@ -391,7 +443,7 @@ windows/uninstall.ps1
 windows/requirements.txt
 ```
 
-Installed location:
+Default installed location:
 
 ```text
 C:\ha-input-bridge
@@ -407,27 +459,144 @@ C:\ha-input-bridge\task_runtime.log
 C:\ha-input-bridge\ha_input_bridge.log
 ```
 
+Default port:
+
+```text
+8765
+```
+
+Scheduled Task name:
+
+```text
+HA Input Bridge
+```
+
+Firewall rule name:
+
+```text
+HA Input Bridge - Home Assistant only
+```
+
+---
+
+## Uninstall the Windows bridge
+
+Open **PowerShell as Administrator**.
+
+Go to the extracted `windows` folder.
+
+Run:
+
+```powershell
+.\uninstall.ps1
+```
+
+The uninstaller removes:
+
+- Scheduled Task
+- Windows Firewall rule
+- Running bridge process from the install directory
+- `C:\ha-input-bridge`
+
+---
+
+## Security warning
+
+This project controls mouse and keyboard input on a Windows PC.
+
+Do not expose the Windows bridge to the public internet.
+
+Recommended safeguards:
+
+- Use the random token generated by the installer.
+- Keep the token private.
+- Bind the bridge only to LAN or Tailscale/VPN addresses.
+- Restrict the Windows Firewall rule to the Home Assistant IP.
+- Keep the arm-before-input safety model enabled.
+- Do not port-forward the bridge.
+- Do not expose it through a public reverse proxy.
+- Do not use it on shared or untrusted networks.
+- Do not publish real tokens, hostnames, local device names, or screenshots containing sensitive data.
+
+Recommended network layout:
+
+```text
+Home Assistant LAN IP → allowed to call Windows bridge
+Other clients         → blocked by firewall or rejected by allowlist
+Internet              → no access
+```
+
+Generic example:
+
+```text
+Windows PC:       192.168.1.50
+Home Assistant:   192.168.1.10
+Bridge port:      8765
+```
+
+These are example addresses only.
+
+---
+
+## Privacy note
+
+The Windows bridge should not log typed text.
+
+Avoid posting these in public GitHub issues:
+
+- Real bridge tokens
+- Public IP addresses
+- Private hostnames
+- Usernames
+- Full screenshots with secrets
+- Full logs containing sensitive values
+- Personal network details
+
+Private LAN IPs such as `192.168.x.x`, `10.x.x.x`, and `172.16.x.x` are not directly reachable from the public internet, but they can still reveal details about your local setup.
+
+Use placeholders when reporting issues:
+
+```text
+<WINDOWS_PC_IP_OR_HOSTNAME>
+<HOME_ASSISTANT_IP>
+<BRIDGE_TOKEN>
+```
+
+---
+
 ## Troubleshooting
 
 ### Integration does not appear after HACS install
 
 Restart Home Assistant.
 
-If it still does not appear, clear browser cache or reload the Home Assistant frontend.
+Then check:
+
+```text
+Settings → Devices & services → Add integration → HA Input Bridge
+```
+
+If it still does not appear, hard-refresh the browser or clear the Home Assistant frontend cache.
+
+---
 
 ### Sidebar item is visible but blank
 
-Hard-refresh the browser or restart Home Assistant.
+Hard-refresh the browser.
 
-Check that this URL loads JavaScript:
+Restart Home Assistant.
+
+Check that this frontend file loads:
 
 ```text
 /ha_input_bridge/pc-trackpad-panel.js
 ```
 
+---
+
 ### Trackpad shows errors while moving
 
-Check the Windows bridge log:
+Check the Windows bridge logs:
 
 ```powershell
 Get-Content C:\ha-input-bridge\ha_input_bridge.log -Tail 120
@@ -440,6 +609,8 @@ Check that the bridge is listening:
 Get-NetTCPConnection -LocalPort 8765 -State Listen
 ```
 
+---
+
 ### Windows bridge is not listening
 
 Check the scheduled task:
@@ -449,7 +620,7 @@ Get-ScheduledTask -TaskName "HA Input Bridge" | Select-Object TaskName, State
 Get-ScheduledTaskInfo -TaskName "HA Input Bridge"
 ```
 
-Check for Python processes:
+Check for Python or PowerShell processes:
 
 ```powershell
 Get-Process python,pythonw,powershell -ErrorAction SilentlyContinue |
@@ -460,23 +631,32 @@ Check runtime logs:
 
 ```powershell
 Get-Content C:\ha-input-bridge\task_runtime.log -Tail 120
+Get-Content C:\ha-input-bridge\ha_input_bridge.log -Tail 120
 ```
 
-### Manual Windows bridge debug
+---
+
+### Manual Windows bridge syntax check
 
 Do not double-click the `.py` file.
 
-Syntax check:
+Run:
 
 ```powershell
 C:\ha-input-bridge\.venv\Scripts\python.exe -m py_compile C:\ha-input-bridge\ha_input_bridge.py
 ```
 
-If running manually for debugging, the required environment variables must be set first. Normal operation should use the Scheduled Task created by the installer.
+Normal operation should use the Scheduled Task created by the installer.
 
-### Reinstall Windows bridge
+Manual debugging requires the environment variables from `start_ha_input_bridge.ps1`.
 
-Run the uninstaller first:
+---
+
+### Reinstall the Windows bridge
+
+Open **PowerShell as Administrator** in the `windows` folder.
+
+Run:
 
 ```powershell
 .\uninstall.ps1
@@ -488,23 +668,99 @@ Then run:
 .\install.ps1
 ```
 
-## Privacy note
+---
 
-Avoid posting real tokens, public IP addresses, private hostnames, usernames, screenshots with secrets, or full logs containing sensitive values in public GitHub issues.
+### Home Assistant cannot connect to the bridge
 
-Private LAN IPs such as `192.168.x.x`, `10.x.x.x`, and `172.16.x.x` are not directly reachable from the public internet, but they can still reveal details about your local setup. Use placeholders when reporting issues.
+Check these values:
+
+```text
+Host: Windows PC IP or hostname
+Port: 8765
+Token: exact token from installer
+```
+
+On Windows, confirm the bridge is listening:
+
+```powershell
+Get-NetTCPConnection -LocalPort 8765 -State Listen
+```
+
+Confirm the firewall rule exists:
+
+```powershell
+Get-NetFirewallRule -DisplayName "HA Input Bridge - Home Assistant only"
+```
+
+Confirm Home Assistant is using the IP address allowed during installation.
+
+---
+
+### Token was exposed
+
+Uninstall and reinstall the Windows bridge.
+
+```powershell
+.\uninstall.ps1
+.\install.ps1
+```
+
+The installer generates a new token.
+
+Then update the Home Assistant integration with the new token.
+
+---
+
+## Repository structure
+
+```text
+ha-input-bridge/
+├─ custom_components/
+│  └─ ha_input_bridge/
+│     ├─ __init__.py
+│     ├─ api.py
+│     ├─ config_flow.py
+│     ├─ const.py
+│     ├─ manifest.json
+│     ├─ services.yaml
+│     ├─ translations/
+│     │  └─ en.json
+│     └─ www/
+│        ├─ pc-trackpad-card.js
+│        └─ pc-trackpad-panel.js
+├─ windows/
+│  ├─ ha_input_bridge.py
+│  ├─ install.ps1
+│  ├─ requirements.txt
+│  └─ uninstall.ps1
+├─ .github/
+│  └─ workflows/
+│     ├─ hacs.yaml
+│     └─ hassfest.yaml
+├─ hacs.json
+├─ README.md
+├─ SECURITY.md
+└─ LICENSE
+```
+
+---
 
 ## Development roadmap
 
-- Add signed Windows executable
-- Add multi-PC selector in the trackpad UI
-- Add health sensor
-- Add position sensor
-- Add diagnostics
-- Improve multi-bridge support
-- Add release packaging for Windows files
-- Add clearer first-run setup guide
-- Add screenshots and demo GIFs
+Planned improvements:
+
+- Signed Windows executable
+- Easier release packaging for Windows files
+- Multi-PC selector in the trackpad UI
+- Better multi-bridge support in Home Assistant actions
+- Health sensor
+- Position sensor
+- Diagnostics
+- Repair issues when the bridge is unreachable
+- Better user-facing frontend errors
+- Screenshots and demo GIFs
+
+---
 
 ## License
 
