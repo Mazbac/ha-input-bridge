@@ -1,5 +1,5 @@
 #define MyAppName "HA Input Bridge"
-#define MyAppVersion "0.3.0"
+#define MyAppVersion "0.4.0"
 #define MyAppPublisher "Mazbac"
 #define MyAgentExeName "ha-input-bridge-agent.exe"
 #define MyTrayExeName "ha-input-bridge-tray.exe"
@@ -161,6 +161,7 @@ begin
 
   S := S + '$InstallDir = ' + PsQuote(AppDir) + CRLF();
   S := S + '$DataDir = Join-Path $env:ProgramData "HA Input Bridge"' + CRLF();
+  S := S + '$ConfigPath = Join-Path $DataDir "config.json"' + CRLF();
   S := S + '$AgentExe = Join-Path $InstallDir "ha-input-bridge-agent.exe"' + CRLF();
   S := S + '$TrayExe = Join-Path $InstallDir "ha-input-bridge-tray.exe"' + CRLF();
   S := S + '$StartScript = Join-Path $InstallDir "start_ha_input_bridge.ps1"' + CRLF();
@@ -187,12 +188,20 @@ begin
   S := S + '$Token = [Convert]::ToBase64String($TokenBytes).TrimEnd("=").Replace("+", "-").Replace("/", "_")' + CRLF();
   S := S + CRLF();
 
+  S := S + '$Config = [ordered]@{' + CRLF();
+  S := S + '  bind_host = $BindHost' + CRLF();
+  S := S + '  allowed_client_ip = $AllowedClientIp' + CRLF();
+  S := S + '  port = [int]$Port' + CRLF();
+  S := S + '  token = $Token' + CRLF();
+  S := S + '  log_file = $BridgeLog' + CRLF();
+  S := S + '  start_bridge_on_login = $true' + CRLF();
+  S := S + '  start_tray_on_login = $true' + CRLF();
+  S := S + '}' + CRLF();
+  S := S + '$Config | ConvertTo-Json -Depth 5 | Set-Content -Path $ConfigPath -Encoding UTF8' + CRLF();
+  S := S + CRLF();
+
   S := S + '$StartContent = @"' + CRLF();
-  S := S + '`$env:HA_INPUT_TOKEN = ''$Token''' + CRLF();
-  S := S + '`$env:HA_ALLOWED_CLIENT_IP = ''$AllowedClientIp''' + CRLF();
-  S := S + '`$env:HA_INPUT_BIND_HOST = ''$BindHost''' + CRLF();
-  S := S + '`$env:HA_INPUT_PORT = ''$Port''' + CRLF();
-  S := S + '`$env:HA_INPUT_LOG_FILE = ''$BridgeLog''' + CRLF();
+  S := S + '`$env:HA_INPUT_CONFIG_FILE = ''$ConfigPath''' + CRLF();
   S := S + '& "$AgentExe" *> "$RuntimeLog"' + CRLF();
   S := S + '"@' + CRLF();
   S := S + 'Set-Content -Path $StartScript -Value $StartContent -Encoding UTF8' + CRLF();
@@ -235,6 +244,9 @@ begin
   S := S + '' + CRLF();
   S := S + 'Tray app:' + CRLF();
   S := S + '$TrayExe' + CRLF();
+  S := S + '' + CRLF();
+  S := S + 'Config:' + CRLF();
+  S := S + '$ConfigPath' + CRLF();
   S := S + '' + CRLF();
   S := S + 'Logs:' + CRLF();
   S := S + '$DataDir' + CRLF();
