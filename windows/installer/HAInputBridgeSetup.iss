@@ -1,7 +1,8 @@
 #define MyAppName "HA Input Bridge"
-#define MyAppVersion "0.2.0"
+#define MyAppVersion "0.3.0"
 #define MyAppPublisher "Mazbac"
-#define MyAppExeName "ha-input-bridge-agent.exe"
+#define MyAgentExeName "ha-input-bridge-agent.exe"
+#define MyTrayExeName "ha-input-bridge-tray.exe"
 
 [Setup]
 AppId={{F7D823F3-6BB1-4D73-B61E-6E85C5E9E1A8}
@@ -21,12 +22,24 @@ ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#MyAppName}
 SetupLogging=yes
 
+[Tasks]
+Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: unchecked
+Name: "starttray"; Description: "Start the tray icon after installation"; GroupDescription: "Startup:"; Flags: checkedonce
+
 [Files]
-Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\{#MyAgentExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\{#MyTrayExeName}"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
+Name: "{autoprograms}\HA Input Bridge\HA Input Bridge Tray"; Filename: "{app}\{#MyTrayExeName}"
 Name: "{autoprograms}\HA Input Bridge\Connection Info"; Filename: "{app}\connection-info.txt"
+Name: "{autoprograms}\HA Input Bridge\Logs Folder"; Filename: "{commonappdata}\HA Input Bridge"
 Name: "{autoprograms}\HA Input Bridge\Install Folder"; Filename: "{app}"
+Name: "{autodesktop}\HA Input Bridge"; Filename: "{app}\{#MyTrayExeName}"; Tasks: desktopicon
+Name: "{userstartup}\HA Input Bridge Tray"; Filename: "{app}\{#MyTrayExeName}"
+
+[Run]
+Filename: "{app}\{#MyTrayExeName}"; Description: "Start HA Input Bridge tray icon"; Flags: nowait postinstall skipifsilent; Tasks: starttray
 
 [UninstallRun]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\uninstall-cleanup.ps1"""; Flags: runhidden; RunOnceId: "HAInputBridgeCleanup"
@@ -149,6 +162,7 @@ begin
   S := S + '$InstallDir = ' + PsQuote(AppDir) + CRLF();
   S := S + '$DataDir = Join-Path $env:ProgramData "HA Input Bridge"' + CRLF();
   S := S + '$AgentExe = Join-Path $InstallDir "ha-input-bridge-agent.exe"' + CRLF();
+  S := S + '$TrayExe = Join-Path $InstallDir "ha-input-bridge-tray.exe"' + CRLF();
   S := S + '$StartScript = Join-Path $InstallDir "start_ha_input_bridge.ps1"' + CRLF();
   S := S + '$UninstallScript = Join-Path $InstallDir "uninstall-cleanup.ps1"' + CRLF();
   S := S + '$InfoPath = Join-Path $InstallDir "connection-info.txt"' + CRLF();
@@ -188,7 +202,7 @@ begin
   S := S + 'Stop-ScheduledTask -TaskName ''HA Input Bridge'' -ErrorAction SilentlyContinue' + CRLF();
   S := S + 'Unregister-ScheduledTask -TaskName ''HA Input Bridge'' -Confirm:`$false -ErrorAction SilentlyContinue' + CRLF();
   S := S + 'Get-NetFirewallRule -DisplayName ''HA Input Bridge - Home Assistant only'' -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue' + CRLF();
-  S := S + 'Get-CimInstance Win32_Process | Where-Object { `$_.CommandLine -like ''*ha-input-bridge-agent.exe*'' } | ForEach-Object { Stop-Process -Id `$_.ProcessId -Force -ErrorAction SilentlyContinue }' + CRLF();
+  S := S + 'Get-CimInstance Win32_Process | Where-Object { `$_.CommandLine -like ''*ha-input-bridge-agent.exe*'' -or `$_.CommandLine -like ''*ha-input-bridge-tray.exe*'' } | ForEach-Object { Stop-Process -Id `$_.ProcessId -Force -ErrorAction SilentlyContinue }' + CRLF();
   S := S + 'Remove-Item -Path "$env:ProgramData\HA Input Bridge" -Recurse -Force -ErrorAction SilentlyContinue' + CRLF();
   S := S + '"@' + CRLF();
   S := S + 'Set-Content -Path $UninstallScript -Value $UninstallContent -Encoding UTF8' + CRLF();
@@ -218,6 +232,9 @@ begin
   S := S + 'Host: $BindHost' + CRLF();
   S := S + 'Port: $Port' + CRLF();
   S := S + 'Token: $Token' + CRLF();
+  S := S + '' + CRLF();
+  S := S + 'Tray app:' + CRLF();
+  S := S + '$TrayExe' + CRLF();
   S := S + '' + CRLF();
   S := S + 'Logs:' + CRLF();
   S := S + '$DataDir' + CRLF();
