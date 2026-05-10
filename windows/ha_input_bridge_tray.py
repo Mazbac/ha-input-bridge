@@ -216,6 +216,19 @@ def get_recommended_host(config: dict[str, Any]) -> str:
     return bind_host or "0.0.0.0"
 
 
+def build_setup_info_text(config: dict[str, Any]) -> str:
+    recommended_host = get_recommended_host(config)
+
+    return "\n".join(
+        [
+            "HA Input Bridge",
+            f"Host: {recommended_host}",
+            f"Port: {config.get('port', DEFAULT_PORT)}",
+            f"Token: {config.get('token', '')}",
+        ]
+    )
+
+
 def write_connection_info(config: dict[str, Any]) -> None:
     recommended_host = get_recommended_host(config)
     candidates = get_host_candidates()
@@ -332,6 +345,45 @@ def run_powershell(script: str, wait: bool = True) -> subprocess.CompletedProces
     )
 
 
+def ps_quote(value: str | Path) -> str:
+    text = str(value).replace("'", "''")
+    return f"'{text}'"
+
+
+def set_clipboard_text(text: str, root: tk.Tk | tk.Toplevel | None = None) -> bool:
+    success = False
+
+    try:
+        temp_path = Path(tempfile.gettempdir()) / "ha-input-bridge-clipboard.txt"
+        temp_path.write_text(text, encoding="utf-8")
+
+        script = f"""
+$Text = Get-Content -Path {ps_quote(temp_path)} -Raw -Encoding UTF8
+Set-Clipboard -Value $Text
+"""
+
+        result = run_powershell(script)
+
+        if isinstance(result, subprocess.CompletedProcess) and result.returncode == 0:
+            success = True
+    except Exception:
+        success = False
+
+    if success:
+        return True
+
+    if root is not None:
+        try:
+            root.clipboard_clear()
+            root.clipboard_append(text)
+            root.update()
+            return True
+        except Exception:
+            return False
+
+    return False
+
+
 def run_powershell_file_elevated(script: str) -> None:
     temp_dir = Path(tempfile.gettempdir())
     script_path = temp_dir / "ha-input-bridge-apply-settings.ps1"
@@ -351,11 +403,6 @@ def run_powershell_file_elevated(script: str) -> None:
     ]
 
     subprocess.run(command, check=False)
-
-
-def ps_quote(value: str | Path) -> str:
-    text = str(value).replace("'", "''")
-    return f"'{text}'"
 
 
 def get_listener_process_id() -> int | None:
@@ -604,22 +651,11 @@ def open_install_folder() -> None:
         os.startfile(path)
 
 
-def copy_connection_info_to_clipboard(root: tk.Tk | tk.Toplevel) -> None:
+def copy_connection_info_to_clipboard(root: tk.Tk | tk.Toplevel) -> bool:
     config = load_config()
-    recommended_host = get_recommended_host(config)
+    text = build_setup_info_text(config)
 
-    text = "\n".join(
-        [
-            "HA Input Bridge",
-            f"Host: {recommended_host}",
-            f"Port: {config.get('port', DEFAULT_PORT)}",
-            f"Token: {config.get('token', '')}",
-        ]
-    )
-
-    root.clipboard_clear()
-    root.clipboard_append(text)
-    root.update()
+    return set_clipboard_text(text, root)
 
 
 def run_uninstaller(icon: pystray.Icon) -> None:
@@ -686,35 +722,50 @@ def open_settings_window(icon: pystray.Icon | None = None) -> None:
     allowed_ip_var = tk.StringVar(value=str(config.get("allowed_client_ip", "")))
     port_var = tk.StringVar(value=str(config.get("port", DEFAULT_PORT)))
     token_var = tk.StringVar(value=str(config.get("token", "")))
+    token_visible_var = tk.BooleanVar(value=False)
     bridge_login_var = tk.BooleanVar(value=bool(config.get("start_bridge_on_login", True)))
     tray_login_var = tk.BooleanVar(value=bool(config.get("start_tray_on_login", True)))
 
     row = 0
 
     ttk.Label(main, text="Windows PC IP address to listen on:").grid(row=row, column=0, sticky="w")
-    ttk.Entry(main, textvariable=bind_host_var, width=46).grid(row=row, column=1, sticky="ew", padx=(12, 0))
+    ttk.Entry(main, textvariable=bind_host_var, width=46).grid(row=row, column=1, columnspan=2, sticky="ew", padx=(12, 0))
     row += 1
 
     ttk.Label(main, text="Home Assistant IP allowed to connect (optional):").grid(row=row, column=0, sticky="w", pady=(8, 0))
-    ttk.Entry(main, textvariable=allowed_ip_var, width=46).grid(row=row, column=1, sticky="ew", padx=(12, 0), pady=(8, 0))
+    ttk.Entry(main, textvariable=allowed_ip_var, width=46).grid(row=row, column=1, columnspan=2, sticky="ew", padx=(12, 0), pady=(8, 0))
     row += 1
 
     ttk.Label(main, text="Bridge port:").grid(row=row, column=0, sticky="w", pady=(8, 0))
-    ttk.Entry(main, textvariable=port_var, width=46).grid(row=row, column=1, sticky="ew", padx=(12, 0), pady=(8, 0))
+    ttk.Entry(main, textvariable=port_var, width=46).grid(row=row, column=1, columnspan=2, sticky="ew", padx=(12, 0), pady=(8, 0))
     row += 1
 
     ttk.Label(main, text="Token:").grid(row=row, column=0, sticky="w", pady=(8, 0))
-    ttk.Entry(main, textvariable=token_var, width=46, show="•").grid(row=row, column=1, sticky="ew", padx=(12, 0), pady=(8, 0))
+    token_entry = ttk.Entry(main, textvariable=token_var, width=46, show="•")
+    token_entry.grid(row=row, column=1, sticky="ew", padx=(12, 0), pady=(8, 0))
+
+    def toggle_token_visibility() -> None:
+        if token_visible_var.get():
+            token_entry.configure(show="•")
+            token_visible_var.set(False)
+            token_toggle_button.configure(text="Show")
+        else:
+            token_entry.configure(show="")
+            token_visible_var.set(True)
+            token_toggle_button.configure(text="Hide")
+
+    token_toggle_button = ttk.Button(main, text="Show", width=8, command=toggle_token_visibility)
+    token_toggle_button.grid(row=row, column=2, sticky="ew", padx=(8, 0), pady=(8, 0))
     row += 1
 
-    ttk.Checkbutton(main, text="Start bridge on Windows login", variable=bridge_login_var).grid(row=row, column=0, columnspan=2, sticky="w", pady=(12, 0))
+    ttk.Checkbutton(main, text="Start bridge on Windows login", variable=bridge_login_var).grid(row=row, column=0, columnspan=3, sticky="w", pady=(12, 0))
     row += 1
 
-    ttk.Checkbutton(main, text="Start tray icon on Windows login", variable=tray_login_var).grid(row=row, column=0, columnspan=2, sticky="w", pady=(4, 0))
+    ttk.Checkbutton(main, text="Start tray icon on Windows login", variable=tray_login_var).grid(row=row, column=0, columnspan=3, sticky="w", pady=(4, 0))
     row += 1
 
     status_var = tk.StringVar(value=get_status_text())
-    ttk.Label(main, textvariable=status_var).grid(row=row, column=0, columnspan=2, sticky="w", pady=(12, 0))
+    ttk.Label(main, textvariable=status_var).grid(row=row, column=0, columnspan=3, sticky="w", pady=(12, 0))
     row += 1
 
     def validate_form() -> dict[str, Any] | None:
@@ -796,8 +847,11 @@ def open_settings_window(icon: pystray.Icon | None = None) -> None:
 
         save_config(new_config)
         write_connection_info(new_config)
-        copy_connection_info_to_clipboard(root)
-        messagebox.showinfo(APP_NAME, "Connection info copied to clipboard.")
+
+        if copy_connection_info_to_clipboard(root):
+            messagebox.showinfo(APP_NAME, "Connection info copied to clipboard.")
+        else:
+            messagebox.showerror(APP_NAME, "Could not copy connection info to clipboard. Use Open Info File instead.")
 
     def open_info() -> None:
         new_config = validate_form()
@@ -809,7 +863,7 @@ def open_settings_window(icon: pystray.Icon | None = None) -> None:
         open_connection_info()
 
     buttons = ttk.Frame(main)
-    buttons.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(16, 0))
+    buttons.grid(row=row, column=0, columnspan=3, sticky="ew", pady=(16, 0))
 
     ttk.Button(buttons, text="Save & Restart Bridge", command=save_and_restart).grid(row=0, column=0, padx=(0, 8))
     ttk.Button(buttons, text="Regenerate Token", command=regenerate_token).grid(row=0, column=1, padx=(0, 8))
@@ -817,7 +871,7 @@ def open_settings_window(icon: pystray.Icon | None = None) -> None:
     ttk.Button(buttons, text="Open Info File", command=open_info).grid(row=0, column=3)
 
     buttons2 = ttk.Frame(main)
-    buttons2.grid(row=row + 1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+    buttons2.grid(row=row + 1, column=0, columnspan=3, sticky="ew", pady=(8, 0))
 
     ttk.Button(buttons2, text="Open Logs", command=open_logs_folder).grid(row=0, column=0, padx=(0, 8))
     ttk.Button(buttons2, text="Open Install Folder", command=open_install_folder).grid(row=0, column=1, padx=(0, 8))
