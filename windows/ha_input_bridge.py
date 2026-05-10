@@ -1,28 +1,25 @@
-from flask import Flask, request, jsonify, abort
-from waitress import serve
+from __future__ import annotations
+
+import logging
 import os
 import time
-import logging
-import pyautogui
+from typing import Any
 
-app = Flask(__name__)
+import pyautogui
+from flask import Flask, abort, jsonify, request
+from waitress import serve
+
+
+APP_NAME = "ha-input-bridge"
+
+DEFAULT_INSTALL_DIR = r"C:\ha-input-bridge"
+DEFAULT_LOG_FILE = os.path.join(DEFAULT_INSTALL_DIR, "ha_input_bridge.log")
 
 TOKEN = os.environ.get("HA_INPUT_TOKEN", "")
 ALLOWED_CLIENT_IP = os.environ.get("HA_ALLOWED_CLIENT_IP", "")
 BIND_HOST = os.environ.get("HA_INPUT_BIND_HOST", "127.0.0.1")
 PORT = int(os.environ.get("HA_INPUT_PORT", "8765"))
-
-if not TOKEN:
-    raise RuntimeError("Missing HA_INPUT_TOKEN environment variable")
-
-logging.basicConfig(
-    filename=r"C:\ha-input-bridge\ha_input_bridge.log",
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-)
-
-pyautogui.FAILSAFE = False
-pyautogui.PAUSE = 0.01
+LOG_FILE = os.environ.get("HA_INPUT_LOG_FILE", DEFAULT_LOG_FILE)
 
 SAFE_MARGIN = 2
 MAX_ABSOLUTE_XY = 10000
@@ -30,34 +27,98 @@ MAX_RELATIVE_STEP = 300
 MAX_SCROLL_AMOUNT = 120
 MAX_TEXT_LENGTH = 500
 
-armed_until = 0
+ALLOWED_KEYS = {
+    "ctrl",
+    "shift",
+    "alt",
+    "win",
+    "enter",
+    "esc",
+    "tab",
+    "space",
+    "left",
+    "right",
+    "up",
+    "down",
+    "backspace",
+    "delete",
+    "home",
+    "end",
+    "pageup",
+    "pagedown",
+    "a",
+    "b",
+    "c",
+    "d",
+    "e",
+    "f",
+    "g",
+    "h",
+    "i",
+    "j",
+    "k",
+    "l",
+    "m",
+    "n",
+    "o",
+    "p",
+    "q",
+    "r",
+    "s",
+    "t",
+    "u",
+    "v",
+    "w",
+    "x",
+    "y",
+    "z",
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+}
+
+app = Flask(__name__)
+armed_until = 0.0
+
+pyautogui.FAILSAFE = False
+pyautogui.PAUSE = 0.01
 
 
-def require_security():
-    if request.headers.get("X-HA-Token") != TOKEN:
-        abort(403)
+def setup_logging() -> None:
+    log_dir = os.path.dirname(LOG_FILE)
 
-    if ALLOWED_CLIENT_IP:
-        remote_ip = request.remote_addr
-        if remote_ip != ALLOWED_CLIENT_IP:
-            abort(403)
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
 
-
-def require_armed():
-    if time.time() > armed_until:
-        abort(423, "Input bridge is not armed")
+    logging.basicConfig(
+        filename=LOG_FILE,
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
 
 
-def clamp(value, low, high):
+def validate_startup_config() -> None:
+    if not TOKEN:
+        raise RuntimeError("Missing HA_INPUT_TOKEN environment variable")
+
+
+def clamp(value: int | float, low: int | float, high: int | float) -> int | float:
     return max(low, min(high, value))
 
 
-def screen_size():
+def screen_size() -> tuple[int, int]:
     width, height = pyautogui.size()
     return int(width), int(height)
 
 
-def clamp_screen_position(x, y):
+def clamp_screen_position(x: int | float, y: int | float) -> tuple[int, int]:
     width, height = screen_size()
 
     min_x = SAFE_MARGIN
@@ -66,70 +127,105 @@ def clamp_screen_position(x, y):
     max_y = max(SAFE_MARGIN, height - 1 - SAFE_MARGIN)
 
     return (
-        clamp(int(x), min_x, max_x),
-        clamp(int(y), min_y, max_y),
+        int(clamp(int(x), min_x, max_x)),
+        int(clamp(int(y), min_y, max_y)),
     )
 
 
-def safe_position():
+def safe_position() -> tuple[int, int]:
     x, y = pyautogui.position()
     return clamp_screen_position(x, y)
 
 
-def safe_move_to(x, y):
-    x, y = clamp_screen_position(x, y)
-    pyautogui.moveTo(x, y, duration=0)
-    return x, y
+def safe_move_to(x: int | float, y: int | float) -> tuple[int, int]:
+    safe_x, safe_y = clamp_screen_position(x, y)
+    pyautogui.moveTo(safe_x, safe_y, duration=0)
+    return safe_x, safe_y
 
 
-def safe_move_relative(dx, dy):
-    dx = clamp(int(dx), -MAX_RELATIVE_STEP, MAX_RELATIVE_STEP)
-    dy = clamp(int(dy), -MAX_RELATIVE_STEP, MAX_RELATIVE_STEP)
+def safe_move_relative(dx: int | float, dy: int | float) -> tuple[int, int]:
+    safe_dx = int(clamp(int(dx), -MAX_RELATIVE_STEP, MAX_RELATIVE_STEP))
+    safe_dy = int(clamp(int(dy), -MAX_RELATIVE_STEP, MAX_RELATIVE_STEP))
 
     current_x, current_y = pyautogui.position()
-
-    target_x = int(current_x) + dx
-    target_y = int(current_y) + dy
+    target_x = int(current_x) + safe_dx
+    target_y = int(current_y) + safe_dy
 
     return safe_move_to(target_x, target_y)
 
 
-def safe_click(button="left", clicks=1, x=None, y=None):
+def safe_click(
+    button: str = "left",
+    clicks: int = 1,
+    x: int | None = None,
+    y: int | None = None,
+) -> None:
     if button not in ("left", "right", "middle"):
         abort(400, "Invalid mouse button")
 
-    clicks = clamp(int(clicks), 1, 3)
+    safe_clicks = int(clamp(int(clicks), 1, 3))
 
     if x is not None and y is not None:
-        x, y = safe_move_to(x, y)
-        pyautogui.click(x=x, y=y, button=button, clicks=clicks)
-    else:
-        safe_x, safe_y = safe_position()
-        pyautogui.moveTo(safe_x, safe_y, duration=0)
-        pyautogui.click(button=button, clicks=clicks)
+        safe_x, safe_y = safe_move_to(x, y)
+        pyautogui.click(x=safe_x, y=safe_y, button=button, clicks=safe_clicks)
+        return
+
+    safe_x, safe_y = safe_position()
+    pyautogui.moveTo(safe_x, safe_y, duration=0)
+    pyautogui.click(button=button, clicks=safe_clicks)
 
 
-def safe_scroll(amount, x=None, y=None):
-    amount = clamp(int(amount), -MAX_SCROLL_AMOUNT, MAX_SCROLL_AMOUNT)
+def safe_scroll(
+    amount: int | float,
+    x: int | None = None,
+    y: int | None = None,
+) -> None:
+    safe_amount = int(clamp(int(amount), -MAX_SCROLL_AMOUNT, MAX_SCROLL_AMOUNT))
 
     if x is not None and y is not None:
-        x, y = safe_move_to(x, y)
-        pyautogui.scroll(amount, x=x, y=y)
-    else:
-        safe_x, safe_y = safe_position()
-        pyautogui.moveTo(safe_x, safe_y, duration=0)
-        pyautogui.scroll(amount)
+        safe_x, safe_y = safe_move_to(x, y)
+        pyautogui.scroll(safe_amount, x=safe_x, y=safe_y)
+        return
+
+    safe_x, safe_y = safe_position()
+    pyautogui.moveTo(safe_x, safe_y, duration=0)
+    pyautogui.scroll(safe_amount)
+
+
+def require_security() -> None:
+    if request.headers.get("X-HA-Token") != TOKEN:
+        abort(403)
+
+    if ALLOWED_CLIENT_IP:
+        remote_ip = request.remote_addr
+
+        if remote_ip != ALLOWED_CLIENT_IP:
+            abort(403)
+
+
+def require_armed() -> None:
+    if time.time() > armed_until:
+        abort(423, "Input bridge is not armed")
+
+
+def request_json() -> dict[str, Any]:
+    data = request.get_json(force=True, silent=True)
+
+    if not isinstance(data, dict):
+        return {}
+
+    return data
 
 
 @app.errorhandler(400)
 @app.errorhandler(403)
 @app.errorhandler(423)
-def handle_known_error(error):
+def handle_known_error(error: Any):
     return jsonify(ok=False, error=str(error.description)), error.code
 
 
 @app.errorhandler(Exception)
-def handle_unexpected_error(error):
+def handle_unexpected_error(error: Exception):
     logging.exception("Unhandled exception")
     return jsonify(ok=False, error="internal_error"), 500
 
@@ -137,7 +233,11 @@ def handle_unexpected_error(error):
 @app.get("/health")
 def health():
     require_security()
-    return jsonify(ok=True, service="ha-input-bridge")
+
+    return jsonify(
+        ok=True,
+        service=APP_NAME,
+    )
 
 
 @app.get("/position")
@@ -163,16 +263,22 @@ def arm():
 
     require_security()
 
-    data = request.get_json(force=True, silent=True) or {}
-
+    data = request_json()
     seconds = int(data.get("seconds", 30))
-    seconds = clamp(seconds, 1, 120)
+    seconds = int(clamp(seconds, 1, 120))
 
     armed_until = time.time() + seconds
 
-    logging.info("ARM seconds=%s from=%s", seconds, request.remote_addr)
+    logging.info(
+        "ARM seconds=%s from=%s",
+        seconds,
+        request.remote_addr,
+    )
 
-    return jsonify(ok=True, armed_for_seconds=seconds)
+    return jsonify(
+        ok=True,
+        armed_for_seconds=seconds,
+    )
 
 
 @app.post("/input")
@@ -180,8 +286,7 @@ def input_command():
     require_security()
     require_armed()
 
-    data = request.get_json(force=True, silent=True) or {}
-
+    data = request_json()
     kind = data.get("type")
     action = data.get("action")
 
@@ -199,110 +304,9 @@ def input_command():
     )
 
     if kind == "mouse":
-        if action == "move":
-            x = clamp(int(data["x"]), 0, MAX_ABSOLUTE_XY)
-            y = clamp(int(data["y"]), 0, MAX_ABSOLUTE_XY)
-            safe_move_to(x, y)
-
-        elif action == "move_relative":
-            dx = int(data.get("dx", 0))
-            dy = int(data.get("dy", 0))
-            safe_move_relative(dx, dy)
-
-        elif action == "click":
-            button = data.get("button", "left")
-            clicks = int(data.get("clicks", 1))
-
-            if "x" in data and "y" in data:
-                safe_click(
-                    button=button,
-                    clicks=clicks,
-                    x=int(data["x"]),
-                    y=int(data["y"]),
-                )
-            else:
-                safe_click(button=button, clicks=clicks)
-
-        elif action == "scroll":
-            amount = int(data.get("amount", 0))
-
-            if "x" in data and "y" in data:
-                safe_scroll(
-                    amount=amount,
-                    x=int(data["x"]),
-                    y=int(data["y"]),
-                )
-            else:
-                safe_scroll(amount=amount)
-
-        else:
-            abort(400, "Invalid mouse action")
-
+        handle_mouse_action(action, data)
     elif kind == "keyboard":
-        if action == "write":
-            text = str(data.get("text", ""))
-            text = text[:MAX_TEXT_LENGTH]
-
-            interval = float(data.get("interval", 0))
-            interval = clamp(interval, 0, 1)
-
-            pyautogui.write(text, interval=interval)
-
-        elif action == "press":
-            key = str(data["key"]).lower()
-
-            allowed_keys = {
-                "ctrl", "shift", "alt", "win",
-                "enter", "esc", "tab", "space",
-                "left", "right", "up", "down",
-                "backspace", "delete",
-                "home", "end", "pageup", "pagedown",
-                "a", "b", "c", "d", "e", "f", "g",
-                "h", "i", "j", "k", "l", "m", "n",
-                "o", "p", "q", "r", "s", "t", "u",
-                "v", "w", "x", "y", "z",
-                "0", "1", "2", "3", "4",
-                "5", "6", "7", "8", "9",
-            }
-
-            if key not in allowed_keys:
-                abort(400, "Disallowed key")
-
-            pyautogui.press(key)
-
-        elif action == "hotkey":
-            keys = data.get("keys", [])
-
-            if not isinstance(keys, list) or not keys:
-                abort(400, "keys must be a non-empty list")
-
-            allowed_keys = {
-                "ctrl", "shift", "alt", "win",
-                "enter", "esc", "tab", "space",
-                "left", "right", "up", "down",
-                "backspace", "delete",
-                "home", "end", "pageup", "pagedown",
-                "a", "b", "c", "d", "e", "f", "g",
-                "h", "i", "j", "k", "l", "m", "n",
-                "o", "p", "q", "r", "s", "t", "u",
-                "v", "w", "x", "y", "z",
-                "0", "1", "2", "3", "4",
-                "5", "6", "7", "8", "9",
-            }
-
-            normalized = [str(k).lower() for k in keys]
-
-            if len(normalized) > 8:
-                abort(400, "Too many hotkey keys")
-
-            if any(k not in allowed_keys for k in normalized):
-                abort(400, "Disallowed key")
-
-            pyautogui.hotkey(*normalized)
-
-        else:
-            abort(400, "Invalid keyboard action")
-
+        handle_keyboard_action(action, data)
     else:
         abort(400, "Invalid type")
 
@@ -315,6 +319,104 @@ def input_command():
     )
 
 
-if __name__ == "__main__":
+def handle_mouse_action(action: str | None, data: dict[str, Any]) -> None:
+    if action == "move":
+        x = int(clamp(int(data["x"]), 0, MAX_ABSOLUTE_XY))
+        y = int(clamp(int(data["y"]), 0, MAX_ABSOLUTE_XY))
+        safe_move_to(x, y)
+        return
+
+    if action == "move_relative":
+        dx = int(data.get("dx", 0))
+        dy = int(data.get("dy", 0))
+        safe_move_relative(dx, dy)
+        return
+
+    if action == "click":
+        button = str(data.get("button", "left"))
+        clicks = int(data.get("clicks", 1))
+
+        if "x" in data and "y" in data:
+            safe_click(
+                button=button,
+                clicks=clicks,
+                x=int(data["x"]),
+                y=int(data["y"]),
+            )
+            return
+
+        safe_click(button=button, clicks=clicks)
+        return
+
+    if action == "scroll":
+        amount = int(data.get("amount", 0))
+
+        if "x" in data and "y" in data:
+            safe_scroll(
+                amount=amount,
+                x=int(data["x"]),
+                y=int(data["y"]),
+            )
+            return
+
+        safe_scroll(amount=amount)
+        return
+
+    abort(400, "Invalid mouse action")
+
+
+def handle_keyboard_action(action: str | None, data: dict[str, Any]) -> None:
+    if action == "write":
+        text = str(data.get("text", ""))
+        text = text[:MAX_TEXT_LENGTH]
+
+        interval = float(data.get("interval", 0))
+        interval = float(clamp(interval, 0, 1))
+
+        pyautogui.write(text, interval=interval)
+        return
+
+    if action == "press":
+        key = str(data["key"]).lower()
+
+        if key not in ALLOWED_KEYS:
+            abort(400, "Disallowed key")
+
+        pyautogui.press(key)
+        return
+
+    if action == "hotkey":
+        keys = data.get("keys", [])
+
+        if not isinstance(keys, list) or not keys:
+            abort(400, "keys must be a non-empty list")
+
+        normalized = [str(key).lower() for key in keys]
+
+        if len(normalized) > 8:
+            abort(400, "Too many hotkey keys")
+
+        if any(key not in ALLOWED_KEYS for key in normalized):
+            abort(400, "Disallowed key")
+
+        pyautogui.hotkey(*normalized)
+        return
+
+    abort(400, "Invalid keyboard action")
+
+
+def main() -> None:
+    validate_startup_config()
+    setup_logging()
+
     logging.info("Starting ha-input-bridge on %s:%s", BIND_HOST, PORT)
-    serve(app, host=BIND_HOST, port=PORT)
+
+    serve(
+        app,
+        host=BIND_HOST,
+        port=PORT,
+    )
+
+
+if __name__ == "__main__":
+    main()
