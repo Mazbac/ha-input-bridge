@@ -214,6 +214,30 @@ def is_usable_host_ip(ip_address: str) -> bool:
     )
 
 
+def host_score(ip_address: str) -> int:
+    parts = ip_address.split(".")
+
+    try:
+        first = int(parts[0])
+        second = int(parts[1])
+    except (IndexError, ValueError):
+        return 50
+
+    if first == 192 and second == 168:
+        return 10
+
+    if first == 10:
+        return 20
+
+    if first == 172 and 16 <= second <= 31:
+        return 30
+
+    if first == 100 and 64 <= second <= 127:
+        return 40
+
+    return 50
+
+
 def get_host_candidates() -> list[str]:
     candidates: list[str] = []
 
@@ -229,7 +253,7 @@ def get_host_candidates() -> list[str]:
         if is_usable_host_ip(ip_address) and ip_address not in candidates:
             candidates.append(ip_address)
 
-    return candidates
+    return sorted(candidates, key=host_score)
 
 
 def get_recommended_host(config: dict[str, Any]) -> str:
@@ -816,15 +840,19 @@ def open_settings_window() -> None:
     notebook.add(advanced, text="Advanced")
 
     recommended_host = get_recommended_host(config)
+    all_hosts = get_host_candidates()
+    other_hosts = [host for host in all_hosts if host != recommended_host]
+    other_hosts_text = ", ".join(other_hosts) if other_hosts else "None"
 
     ttk.Label(basic, textvariable=status_var).grid(row=0, column=0, columnspan=3, sticky="w")
-    ttk.Label(basic, text=f"Home Assistant host: {recommended_host}").grid(row=1, column=0, columnspan=3, sticky="w", pady=(8, 0))
-    ttk.Label(basic, text=f"Port: {config.get('port', DEFAULT_PORT)}").grid(row=2, column=0, columnspan=3, sticky="w", pady=(4, 0))
-    ttk.Label(basic, text="Listening mode: Automatic - all local network adapters").grid(row=3, column=0, columnspan=3, sticky="w", pady=(4, 0))
+    ttk.Label(basic, text=f"Windows bridge host: {recommended_host}").grid(row=1, column=0, columnspan=3, sticky="w", pady=(8, 0))
+    ttk.Label(basic, text=f"Other host values: {other_hosts_text}").grid(row=2, column=0, columnspan=3, sticky="w", pady=(4, 0))
+    ttk.Label(basic, text=f"Port: {config.get('port', DEFAULT_PORT)}").grid(row=3, column=0, columnspan=3, sticky="w", pady=(4, 0))
+    ttk.Label(basic, text="Listening mode: Automatic - all local network adapters").grid(row=4, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
-    ttk.Label(basic, text="Token:").grid(row=4, column=0, sticky="w", pady=(12, 0))
+    ttk.Label(basic, text="Token:").grid(row=5, column=0, sticky="w", pady=(12, 0))
     token_entry = ttk.Entry(basic, textvariable=token_var, width=46, show="•")
-    token_entry.grid(row=4, column=1, sticky="ew", padx=(12, 0), pady=(12, 0))
+    token_entry.grid(row=5, column=1, sticky="ew", padx=(12, 0), pady=(12, 0))
 
     def toggle_token_visibility() -> None:
         if token_visible_var.get():
@@ -837,10 +865,10 @@ def open_settings_window() -> None:
             token_toggle_button.configure(text="Hide")
 
     token_toggle_button = ttk.Button(basic, text="Show", width=8, command=toggle_token_visibility)
-    token_toggle_button.grid(row=4, column=2, sticky="ew", padx=(8, 0), pady=(12, 0))
+    token_toggle_button.grid(row=5, column=2, sticky="ew", padx=(8, 0), pady=(12, 0))
 
-    ttk.Checkbutton(basic, text="Start bridge on Windows login", variable=bridge_login_var).grid(row=5, column=0, columnspan=3, sticky="w", pady=(12, 0))
-    ttk.Checkbutton(basic, text="Start tray icon on Windows login", variable=tray_login_var).grid(row=6, column=0, columnspan=3, sticky="w", pady=(4, 0))
+    ttk.Checkbutton(basic, text="Start bridge on Windows login", variable=bridge_login_var).grid(row=6, column=0, columnspan=3, sticky="w", pady=(12, 0))
+    ttk.Checkbutton(basic, text="Start tray icon on Windows login", variable=tray_login_var).grid(row=7, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
     ttk.Label(advanced, text="Bind address:").grid(row=0, column=0, sticky="w")
     ttk.Entry(advanced, textvariable=bind_host_var, width=46).grid(row=0, column=1, sticky="ew", padx=(12, 0))
