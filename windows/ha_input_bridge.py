@@ -4,12 +4,14 @@ import json
 import logging
 import os
 import time
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
 import pyautogui
 from flask import Flask, abort, jsonify, request
 from waitress import serve
+from werkzeug.exceptions import RequestEntityTooLarge
 
 
 APP_NAME = "ha-input-bridge"
@@ -23,6 +25,10 @@ MAX_ABSOLUTE_XY = 10000
 MAX_RELATIVE_STEP = 300
 MAX_SCROLL_AMOUNT = 120
 MAX_TEXT_LENGTH = 500
+MAX_REQUEST_BODY_BYTES = 16 * 1024
+
+LOG_MAX_BYTES = 1 * 1024 * 1024
+LOG_BACKUP_COUNT = 3
 
 ALLOWED_KEYS = {
     "ctrl",
@@ -82,6 +88,8 @@ ALLOWED_KEYS = {
 }
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = MAX_REQUEST_BODY_BYTES
+
 armed_until = 0.0
 
 pyautogui.FAILSAFE = False
@@ -143,11 +151,24 @@ def setup_logging() -> None:
     log_file = Path(LOG_FILE)
     log_file.parent.mkdir(parents=True, exist_ok=True)
 
-    logging.basicConfig(
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+
+    for handler in list(root_logger.handlers):
+        root_logger.removeHandler(handler)
+
+    file_handler = RotatingFileHandler(
         filename=str(log_file),
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
+        maxBytes=LOG_MAX_BYTES,
+        backupCount=LOG_BACKUP_COUNT,
+        encoding="utf-8",
     )
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    )
+
+    root_logger.addHandler(file_handler)
 
 
 def validate_startup_config() -> None:
@@ -268,9 +289,15 @@ def request_json() -> dict[str, Any]:
 
 @app.errorhandler(400)
 @app.errorhandler(403)
+@app.errorhandler(413)
 @app.errorhandler(423)
 def handle_known_error(error: Any):
     return jsonify(ok=False, error=str(error.description)), error.code
+
+
+@app.errorhandler(RequestEntityTooLarge)
+def handle_request_too_large(error: RequestEntityTooLarge):
+    return jsonify(ok=False, error="request_too_large"), 413
 
 
 @app.errorhandler(Exception)
@@ -339,18 +366,22 @@ def input_command():
     kind = data.get("type")
     action = data.get("action")
 
-    logging.info(
-        "INPUT from=%s type=%s action=%s x=%s y=%s dx=%s dy=%s button=%s key=%s",
-        request.remote_addr,
-        kind,
-        action,
-        data.get("x"),
-        data.get("y"),
-        data.get("dx"),
-        data.get("dy"),
-        data.get("button"),
-        data.get("key"),
-    )
+    if kind == "mouse" and action in ("move", "move_relative", "scroll"):
+        logging.debug(
+            "INPUT_FAST from=%s type=%s action=%s",
+            request.remote_addr,
+            kind,
+            action,
+        )
+    else:
+        logging.info(
+            "INPUT from=%s type=%s action=%s button=%s key=%s",
+            request.remote_addr,
+            kind,
+            action,
+            data.get("button"),
+            data.get("key"),
+        )
 
     if kind == "mouse":
         handle_mouse_action(action, data)
