@@ -60,31 +60,28 @@ class HAInputBridgeClient:
     ) -> dict[str, Any]:
         """Make an authenticated request."""
         url = f"{self._base_url}{path}"
-
         headers = {
             "X-HA-Token": self._token,
         }
 
         try:
             async with timeout(self._timeout_seconds):
-                response = await self._session.request(
+                async with self._session.request(
                     method,
                     url,
                     headers=headers,
                     json=json_data,
-                )
+                ) as response:
+                    if response.status == 403:
+                        raise InvalidAuth("Invalid HA Input Bridge token")
 
-                if response.status == 403:
-                    await response.release()
-                    raise InvalidAuth("Invalid HA Input Bridge token")
+                    if response.status >= 400:
+                        text = await response.text()
+                        raise BridgeApiError(
+                            f"Bridge returned HTTP {response.status}: {text}"
+                        )
 
-                if response.status >= 400:
-                    text = await response.text()
-                    raise BridgeApiError(
-                        f"Bridge returned HTTP {response.status}: {text}"
-                    )
-
-                data = await response.json(content_type=None)
+                    data = await response.json(content_type=None)
 
         except InvalidAuth:
             raise
