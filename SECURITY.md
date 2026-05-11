@@ -1,84 +1,73 @@
 # Security Policy
 
-HA Input Bridge controls mouse and keyboard input on a Windows PC.
-
-Treat this project as sensitive remote-control software.
-
 ## Supported versions
 
-This project is experimental. Security fixes are handled on the latest `main` branch until versioned releases are established.
+Security fixes are provided for the latest released version of HA Input Bridge.
+
+| Version | Supported |
+| ------- | --------- |
+| latest  | Yes       |
+| older versions | No |
+
+Users should update to the latest release before reporting a security issue.
+
+---
 
 ## Security model
 
-HA Input Bridge is designed for local/private networks only.
+HA Input Bridge is designed for local-network use.
 
-The Windows bridge should be protected by:
+The Windows bridge accepts input commands from Home Assistant and converts them into mouse and keyboard actions on the Windows PC.
 
-- A strong random token
-- Binding only to a LAN or VPN/Tailscale IP
-- Windows Firewall restricted to the Home Assistant IP
-- Home Assistant integration config stored locally
-- Arm-before-input behavior
-- No public internet exposure
+Security depends on:
 
-## Do not expose this bridge publicly
+- a private token
+- Windows Firewall
+- local network access
+- a temporary arm window before input commands are accepted
 
-Do not:
+The token must be kept private.
 
-- Port-forward the bridge
-- Put it behind a public reverse proxy
-- Expose it through Cloudflare Tunnel
-- Expose it through Nabu Casa remote access
-- Share the token
-- Use it on untrusted Wi-Fi
-- Use it where other network clients are not trusted
+Anyone who can reach the bridge over the network and has the token may be able to send input commands while the bridge is armed.
 
-## Sensitive information
+---
 
-Do not post the following in public issues:
+## Default network behavior
 
-- Bridge token
-- Full logs containing tokens
-- Public IP addresses
-- Private hostnames
-- Screenshots showing secrets
-- Personal usernames
-- Full local network diagrams
+By default, the Windows bridge:
 
-Private LAN IPs such as `192.168.x.x`, `10.x.x.x`, and `172.16.x.x` are not directly reachable from the public internet, but they can still reveal setup details. Prefer placeholders.
+- binds to all local network adapters using `0.0.0.0`
+- listens on TCP port `8765`
+- creates a Windows Firewall rule
+- limits firewall access to `LocalSubnet`
+- requires the token on every request
 
-## Reporting a vulnerability
+Advanced users may restrict access further by setting the allowed Home Assistant IP address in the Windows tray settings.
 
-Open a private security advisory on GitHub if available.
+---
 
-If private advisory reporting is not available, open a minimal public issue without secrets and say that you need a private channel for security details.
+## What not to expose
 
-## Log handling
+Do not expose HA Input Bridge directly to the public internet.
 
-The Windows bridge should not log typed text.
+Do not port-forward the bridge port.
 
-Logs may include:
+Do not share your token.
 
-- Source IP
-- Command type
-- Mouse movement
-- Mouse button
-- Keyboard key names
+Do not include your token in:
 
-Logs should not include:
+- screenshots
+- GitHub issues
+- logs
+- support requests
+- release notes
+- documentation examples
 
-- Tokens
-- Full text payloads
-- Passwords
-- Personal data
+If a token is exposed, regenerate it from the Windows tray settings:
 
-## Token rotation
-
-If a token is exposed:
-
-1. Stop the Windows bridge.
-2. Generate a new token.
-3. Update the Windows start script.
-4. Update the Home Assistant integration config.
-5. Restart the Windows bridge.
-6. Remove exposed logs or screenshots.
+```text
+Right-click tray icon
+→ Settings...
+→ Regenerate Token
+→ Save & Restart Bridge
+→ Copy setup info
