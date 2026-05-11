@@ -5,13 +5,13 @@ class PcTrackpadCard extends HTMLElement {
     const saved = this._loadSavedSettings();
 
     this.config = {
-      sensitivity: 2.2,
-      frame_ms: 16,
-      max_step: 220,
+      sensitivity: 2.8,
+      frame_ms: 12,
+      max_step: 650,
       tap_max_ms: 260,
       tap_threshold_px: 10,
-      scroll_gain: 3.0,
-      scroll_max_step: 80,
+      scroll_gain: 3.2,
+      scroll_max_step: 100,
       haptics: true,
       live_type: true,
       auto_focus_text_after_left_click: false,
@@ -269,7 +269,7 @@ class PcTrackpadCard extends HTMLElement {
                 Mouse speed
                 <span id="sensitivityValue">${this.settings.sensitivity.toFixed(2)}x</span>
               </label>
-              <input id="sensitivitySlider" type="range" min="0.4" max="5.0" step="0.05" value="${this.settings.sensitivity}">
+              <input id="sensitivitySlider" type="range" min="0.4" max="7.0" step="0.05" value="${this.settings.sensitivity}">
             </div>
 
             <div class="slider-row">
@@ -285,7 +285,7 @@ class PcTrackpadCard extends HTMLElement {
                 Max mouse step
                 <span id="maxStepValue">${this.settings.max_step}px</span>
               </label>
-              <input id="maxStepSlider" type="range" min="30" max="300" step="5" value="${this.settings.max_step}">
+              <input id="maxStepSlider" type="range" min="60" max="1000" step="10" value="${this.settings.max_step}">
             </div>
 
             <div class="slider-row">
@@ -293,7 +293,7 @@ class PcTrackpadCard extends HTMLElement {
                 Max scroll step
                 <span id="scrollMaxStepValue">${this.settings.scroll_max_step}</span>
               </label>
-              <input id="scrollMaxStepSlider" type="range" min="5" max="80" step="1" value="${this.settings.scroll_max_step}">
+              <input id="scrollMaxStepSlider" type="range" min="5" max="120" step="1" value="${this.settings.scroll_max_step}">
             </div>
 
             <div class="slider-row">
@@ -301,7 +301,7 @@ class PcTrackpadCard extends HTMLElement {
                 Frame interval
                 <span id="frameValue">${this.settings.frame_ms}ms</span>
               </label>
-              <input id="frameSlider" type="range" min="10" max="35" step="1" value="${this.settings.frame_ms}">
+              <input id="frameSlider" type="range" min="8" max="35" step="1" value="${this.settings.frame_ms}">
             </div>
 
             <label class="toggle-row">
@@ -659,11 +659,11 @@ class PcTrackpadCard extends HTMLElement {
         // ignore
       }
 
-      this.settings.sensitivity = 2.2;
-      this.settings.frame_ms = 16;
-      this.settings.max_step = 220;
-      this.settings.scroll_gain = 3.0;
-      this.settings.scroll_max_step = 80;
+      this.settings.sensitivity = 2.8;
+      this.settings.frame_ms = 12;
+      this.settings.max_step = 650;
+      this.settings.scroll_gain = 3.2;
+      this.settings.scroll_max_step = 100;
       this._saveSettings();
       this._render();
       this._haptic("medium");
@@ -1053,6 +1053,19 @@ class PcTrackpadCard extends HTMLElement {
     };
   }
 
+  _addMouseDelta(rawDx, rawDy) {
+    if (this._disposed) return;
+
+    this._pendingDx += rawDx * this.settings.sensitivity;
+    this._pendingDy += rawDy * this.settings.sensitivity;
+  }
+
+  _addScrollDelta(rawDy) {
+    if (this._disposed) return;
+
+    this._pendingScroll += rawDy * this.settings.scroll_gain;
+  }
+
   _startLoop() {
     if (this._disposed) return;
     if (this._moveTimer) return;
@@ -1086,7 +1099,7 @@ class PcTrackpadCard extends HTMLElement {
     if (this._disposed) return;
     if (this._moveInFlight) return;
 
-    const maxStep = Number(this.settings.max_step) || 150;
+    const maxStep = Number(this.settings.max_step) || 650;
 
     let dx = Math.round(this._pendingDx);
     let dy = Math.round(this._pendingDy);
@@ -1112,6 +1125,13 @@ class PcTrackpadCard extends HTMLElement {
       // ignore service errors
     } finally {
       this._moveInFlight = false;
+
+      if (
+        !this._disposed &&
+        (Math.abs(this._pendingDx) >= 1 || Math.abs(this._pendingDy) >= 1)
+      ) {
+        this._setTimeout(() => this._flushMove(), 0);
+      }
     }
   }
 
@@ -1119,7 +1139,7 @@ class PcTrackpadCard extends HTMLElement {
     if (this._disposed) return;
     if (this._scrollInFlight) return;
 
-    const maxStep = Number(this.settings.scroll_max_step) || 80;
+    const maxStep = Number(this.settings.scroll_max_step) || 100;
 
     let amount = Math.round(this._pendingScroll);
 
@@ -1141,6 +1161,10 @@ class PcTrackpadCard extends HTMLElement {
       // ignore service errors
     } finally {
       this._scrollInFlight = false;
+
+      if (!this._disposed && Math.abs(this._pendingScroll) >= 1) {
+        this._setTimeout(() => this._flushScroll(), 0);
+      }
     }
   }
 
@@ -1209,12 +1233,11 @@ class PcTrackpadCard extends HTMLElement {
     this._gesture.totalMove += Math.abs(rawDx) + Math.abs(rawDy);
 
     if (fingers === 1) {
-      this._pendingDx += rawDx * this.settings.sensitivity;
-      this._pendingDy += rawDy * this.settings.sensitivity;
+      this._addMouseDelta(rawDx, rawDy);
     }
 
     if (fingers === 2) {
-      this._pendingScroll += rawDy * this.settings.scroll_gain;
+      this._addScrollDelta(rawDy);
     }
   }
 
@@ -1306,15 +1329,21 @@ class PcTrackpadCard extends HTMLElement {
 
     ev.preventDefault();
 
-    const rawDx = ev.clientX - this._lastX;
-    const rawDy = ev.clientY - this._lastY;
+    const events =
+      typeof ev.getCoalescedEvents === "function"
+        ? ev.getCoalescedEvents()
+        : [ev];
 
-    this._lastX = ev.clientX;
-    this._lastY = ev.clientY;
-    this._totalMove += Math.abs(rawDx) + Math.abs(rawDy);
+    for (const event of events) {
+      const rawDx = event.clientX - this._lastX;
+      const rawDy = event.clientY - this._lastY;
 
-    this._pendingDx += rawDx * this.settings.sensitivity;
-    this._pendingDy += rawDy * this.settings.sensitivity;
+      this._lastX = event.clientX;
+      this._lastY = event.clientY;
+      this._totalMove += Math.abs(rawDx) + Math.abs(rawDy);
+
+      this._addMouseDelta(rawDx, rawDy);
+    }
   }
 
   async _pointerUp(ev) {
