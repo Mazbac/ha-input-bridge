@@ -8,21 +8,16 @@ class PcTrackpadCard extends HTMLElement {
       sensitivity: 2.2,
       frame_ms: 16,
       max_step: 220,
-
       tap_max_ms: 260,
       tap_threshold_px: 10,
-
       scroll_gain: 3.0,
       scroll_max_step: 80,
-
       haptics: true,
       live_type: true,
-
       auto_focus_text_after_left_click: false,
       clear_text_on_auto_focus: true,
 
       service_domain: "ha_input_bridge",
-
       service_arm: "arm",
       service_position: "position",
       service_move: "move",
@@ -49,31 +44,7 @@ class PcTrackpadCard extends HTMLElement {
       clear_text_on_auto_focus: Boolean(this.config.clear_text_on_auto_focus),
     };
 
-    this._gesture = null;
-    this._dragging = false;
-
-    this._lastX = null;
-    this._lastY = null;
-    this._totalMove = 0;
-
-    this._pendingDx = 0;
-    this._pendingDy = 0;
-    this._pendingScroll = 0;
-
-    this._moveTimer = null;
-    this._moveInFlight = false;
-    this._scrollInFlight = false;
-
-    this._armPromise = null;
-    this._armedUntilMs = 0;
-
-    this._keyboardQueue = Promise.resolve();
-    this._liveTextValue = "";
-    this._suppressInput = false;
-    this._lastSpecialKeyMs = 0;
-
-    this._ignorePointerUntil = 0;
-
+    this._initializeRuntimeState();
     this._render();
   }
 
@@ -85,10 +56,98 @@ class PcTrackpadCard extends HTMLElement {
     return 8;
   }
 
+  connectedCallback() {
+    this._disposed = false;
+  }
+
+  disconnectedCallback() {
+    this._disposeRuntime();
+  }
+
+  _initializeRuntimeState() {
+    this._disposed = false;
+    this._gesture = null;
+    this._dragging = false;
+    this._lastX = null;
+    this._lastY = null;
+    this._totalMove = 0;
+    this._pendingDx = 0;
+    this._pendingDy = 0;
+    this._pendingScroll = 0;
+    this._moveTimer = null;
+    this._moveInFlight = false;
+    this._scrollInFlight = false;
+    this._armPromise = null;
+    this._armedUntilMs = 0;
+    this._keyboardQueue = Promise.resolve();
+    this._liveTextValue = "";
+    this._suppressInput = false;
+    this._lastSpecialKeyMs = 0;
+    this._ignorePointerUntil = 0;
+    this._timeouts = new Set();
+  }
+
+  _disposeRuntime() {
+    this._disposed = true;
+
+    if (this._moveTimer) {
+      window.clearInterval(this._moveTimer);
+      this._moveTimer = null;
+    }
+
+    if (this._timeouts) {
+      for (const timeoutId of this._timeouts) {
+        window.clearTimeout(timeoutId);
+      }
+      this._timeouts.clear();
+    }
+
+    this._gesture = null;
+    this._dragging = false;
+    this._lastX = null;
+    this._lastY = null;
+    this._totalMove = 0;
+    this._pendingDx = 0;
+    this._pendingDy = 0;
+    this._pendingScroll = 0;
+    this._moveInFlight = false;
+    this._scrollInFlight = false;
+    this._armPromise = null;
+    this._armedUntilMs = 0;
+    this._keyboardQueue = Promise.resolve();
+    this._liveTextValue = "";
+    this._suppressInput = false;
+
+    this._setActive(false);
+  }
+
+  _setTimeout(callback, delay) {
+    const timeoutId = window.setTimeout(() => {
+      if (this._timeouts) {
+        this._timeouts.delete(timeoutId);
+      }
+
+      if (!this._disposed) {
+        callback();
+      }
+    }, delay);
+
+    if (!this._timeouts) {
+      this._timeouts = new Set();
+    }
+
+    this._timeouts.add(timeoutId);
+    return timeoutId;
+  }
+
   _loadSavedSettings() {
     try {
       const raw = window.localStorage.getItem(this.storageKey);
-      if (!raw) return {};
+
+      if (!raw) {
+        return {};
+      }
+
       return JSON.parse(raw) || {};
     } catch (_) {
       return {};
@@ -111,10 +170,15 @@ class PcTrackpadCard extends HTMLElement {
           clear_text_on_auto_focus: this.settings.clear_text_on_auto_focus,
         })
       );
-    } catch (_) {}
+    } catch (_) {
+      // localStorage may be unavailable in some app/webview contexts.
+    }
   }
 
   _render() {
+    this._disposeRuntime();
+    this._disposed = false;
+
     this.innerHTML = `
       <ha-card>
         <div class="wrap">
@@ -352,7 +416,11 @@ class PcTrackpadCard extends HTMLElement {
           padding: 10px;
           border: 1px solid var(--divider-color);
           border-radius: 16px;
-          background: color-mix(in srgb, var(--ha-card-background, var(--card-background-color)) 92%, var(--secondary-background-color));
+          background: color-mix(
+            in srgb,
+            var(--ha-card-background, var(--card-background-color)) 92%,
+            var(--secondary-background-color)
+          );
         }
 
         .panel summary {
@@ -433,29 +501,26 @@ class PcTrackpadCard extends HTMLElement {
         .slider-row label {
           display: flex;
           justify-content: space-between;
+          gap: 12px;
           font-size: 13px;
-          opacity: 0.85;
+          margin-bottom: 4px;
         }
 
         .slider-row input[type="range"] {
           width: 100%;
-          margin-top: 5px;
         }
 
-        @media (max-width: 420px) {
-          .wrap {
-            padding: 10px;
+        @media (max-width: 520px) {
+          .pad {
+            min-height: 280px;
           }
 
-          .pad {
-            height: min(50vh, 410px);
-            min-height: 285px;
+          .secondary-grid {
+            grid-template-columns: repeat(2, 1fr);
           }
 
           button {
             font-size: 13px;
-            padding-left: 6px;
-            padding-right: 6px;
           }
         }
       </style>
@@ -464,7 +529,6 @@ class PcTrackpadCard extends HTMLElement {
     const pad = this.querySelector("#pad");
 
     pad.addEventListener("contextmenu", (ev) => ev.preventDefault());
-
     pad.addEventListener("touchstart", (ev) => this._touchStart(ev), { passive: false });
     pad.addEventListener("touchmove", (ev) => this._touchMove(ev), { passive: false });
     pad.addEventListener("touchend", (ev) => this._touchEnd(ev), { passive: false });
@@ -481,6 +545,10 @@ class PcTrackpadCard extends HTMLElement {
   }
 
   _callBridge(service, data = {}) {
+    if (this._disposed || !this._hass) {
+      return Promise.resolve();
+    }
+
     return this._hass.callService(this.config.service_domain, service, data);
   }
 
@@ -488,6 +556,7 @@ class PcTrackpadCard extends HTMLElement {
     const input = this.querySelector("#textInput");
 
     input.addEventListener("keydown", (ev) => {
+      if (this._disposed) return;
       if (!this.settings.live_type) return;
 
       if (ev.key === "Enter") {
@@ -505,11 +574,11 @@ class PcTrackpadCard extends HTMLElement {
       if (ev.key === "Delete" && input.value.length === 0) {
         ev.preventDefault();
         this._sendSpecialKeyFromTextInput("delete");
-        return;
       }
     });
 
     input.addEventListener("beforeinput", (ev) => {
+      if (this._disposed) return;
       if (!this.settings.live_type) return;
       if (this._suppressInput) return;
 
@@ -530,11 +599,11 @@ class PcTrackpadCard extends HTMLElement {
       if (type === "deleteContentForward" && input.value.length === 0) {
         ev.preventDefault();
         this._sendSpecialKeyFromTextInput("delete");
-        return;
       }
     });
 
     input.addEventListener("input", () => {
+      if (this._disposed) return;
       if (this._suppressInput) return;
 
       if (this.settings.live_type) {
@@ -543,6 +612,7 @@ class PcTrackpadCard extends HTMLElement {
     });
 
     input.addEventListener("change", () => {
+      if (this._disposed) return;
       if (this._suppressInput) return;
 
       if (this.settings.live_type) {
@@ -552,6 +622,8 @@ class PcTrackpadCard extends HTMLElement {
   }
 
   _sendSpecialKeyFromTextInput(key) {
+    if (this._disposed) return;
+
     const now = Date.now();
 
     if (now - this._lastSpecialKeyMs < 60) {
@@ -565,6 +637,8 @@ class PcTrackpadCard extends HTMLElement {
 
   _bindButtons() {
     this.querySelector("#openKeyboard").addEventListener("click", () => {
+      if (this._disposed) return;
+
       const panel = this.querySelector("#keyboardPanel");
       panel.open = true;
       this._focusTextInput(false);
@@ -572,42 +646,56 @@ class PcTrackpadCard extends HTMLElement {
     });
 
     this.querySelector("#testHaptic").addEventListener("click", () => {
+      if (this._disposed) return;
       this._haptic("heavy");
     });
 
     this.querySelector("#resetSettings").addEventListener("click", () => {
+      if (this._disposed) return;
+
       try {
         window.localStorage.removeItem(this.storageKey);
-      } catch (_) {}
+      } catch (_) {
+        // ignore
+      }
 
       this.settings.sensitivity = 2.2;
       this.settings.frame_ms = 16;
       this.settings.max_step = 220;
       this.settings.scroll_gain = 3.0;
       this.settings.scroll_max_step = 80;
-
       this._saveSettings();
       this._render();
       this._haptic("medium");
     });
 
     this.querySelectorAll("[data-click]").forEach((btn) => {
-      btn.addEventListener("click", () => this._click(btn.dataset.click));
+      btn.addEventListener("click", () => {
+        if (!this._disposed) this._click(btn.dataset.click);
+      });
     });
 
     this.querySelectorAll("[data-scroll]").forEach((btn) => {
-      btn.addEventListener("click", () => this._scroll(Number(btn.dataset.scroll)));
+      btn.addEventListener("click", () => {
+        if (!this._disposed) this._scroll(Number(btn.dataset.scroll));
+      });
     });
 
     this.querySelectorAll("[data-key]").forEach((btn) => {
-      btn.addEventListener("click", () => this._press(btn.dataset.key));
+      btn.addEventListener("click", () => {
+        if (!this._disposed) this._press(btn.dataset.key);
+      });
     });
 
     this.querySelectorAll("[data-hotkey]").forEach((btn) => {
-      btn.addEventListener("click", () => this._hotkey(btn.dataset.hotkey.split(",")));
+      btn.addEventListener("click", () => {
+        if (!this._disposed) this._hotkey(btn.dataset.hotkey.split(","));
+      });
     });
 
     this.querySelector("#sendText").addEventListener("click", async () => {
+      if (this._disposed) return;
+
       const input = this.querySelector("#textInput");
 
       if (this.settings.live_type) {
@@ -625,6 +713,8 @@ class PcTrackpadCard extends HTMLElement {
     });
 
     this.querySelector("#clearText").addEventListener("click", () => {
+      if (this._disposed) return;
+
       const input = this.querySelector("#textInput");
       this._clearLocalText(input);
       this._haptic("selection");
@@ -644,37 +734,42 @@ class PcTrackpadCard extends HTMLElement {
     const clearOnFocusToggle = this.querySelector("#clearOnFocusToggle");
 
     sensitivitySlider.addEventListener("input", () => {
+      if (this._disposed) return;
+
       this.settings.sensitivity = Number(sensitivitySlider.value);
-      this.querySelector("#sensitivityValue").textContent =
-        `${this.settings.sensitivity.toFixed(2)}x`;
+      this.querySelector("#sensitivityValue").textContent = `${this.settings.sensitivity.toFixed(2)}x`;
       this._saveSettings();
     });
 
     scrollGainSlider.addEventListener("input", () => {
+      if (this._disposed) return;
+
       this.settings.scroll_gain = Number(scrollGainSlider.value);
-      this.querySelector("#scrollGainValue").textContent =
-        `${this.settings.scroll_gain.toFixed(2)}x`;
+      this.querySelector("#scrollGainValue").textContent = `${this.settings.scroll_gain.toFixed(2)}x`;
       this._saveSettings();
     });
 
     maxStepSlider.addEventListener("input", () => {
+      if (this._disposed) return;
+
       this.settings.max_step = Number(maxStepSlider.value);
-      this.querySelector("#maxStepValue").textContent =
-        `${this.settings.max_step}px`;
+      this.querySelector("#maxStepValue").textContent = `${this.settings.max_step}px`;
       this._saveSettings();
     });
 
     scrollMaxStepSlider.addEventListener("input", () => {
+      if (this._disposed) return;
+
       this.settings.scroll_max_step = Number(scrollMaxStepSlider.value);
-      this.querySelector("#scrollMaxStepValue").textContent =
-        `${this.settings.scroll_max_step}`;
+      this.querySelector("#scrollMaxStepValue").textContent = `${this.settings.scroll_max_step}`;
       this._saveSettings();
     });
 
     frameSlider.addEventListener("input", () => {
+      if (this._disposed) return;
+
       this.settings.frame_ms = Number(frameSlider.value);
-      this.querySelector("#frameValue").textContent =
-        `${this.settings.frame_ms}ms`;
+      this.querySelector("#frameValue").textContent = `${this.settings.frame_ms}ms`;
 
       if (this._moveTimer) {
         this._stopLoop();
@@ -685,28 +780,38 @@ class PcTrackpadCard extends HTMLElement {
     });
 
     hapticsToggle.addEventListener("change", () => {
+      if (this._disposed) return;
+
       this.settings.haptics = hapticsToggle.checked;
-      if (this.settings.haptics) this._haptic("medium");
+
+      if (this.settings.haptics) {
+        this._haptic("medium");
+      }
+
       this._saveSettings();
     });
 
     liveTypeToggle.addEventListener("change", () => {
-      const input = this.querySelector("#textInput");
+      if (this._disposed) return;
 
+      const input = this.querySelector("#textInput");
       this.settings.live_type = liveTypeToggle.checked;
       this._liveTextValue = input.value;
-
       this._haptic(this.settings.live_type ? "medium" : "selection");
       this._saveSettings();
     });
 
     autoFocusToggle.addEventListener("change", () => {
+      if (this._disposed) return;
+
       this.settings.auto_focus_text_after_left_click = autoFocusToggle.checked;
       this._haptic(this.settings.auto_focus_text_after_left_click ? "medium" : "selection");
       this._saveSettings();
     });
 
     clearOnFocusToggle.addEventListener("change", () => {
+      if (this._disposed) return;
+
       this.settings.clear_text_on_auto_focus = clearOnFocusToggle.checked;
       this._haptic(this.settings.clear_text_on_auto_focus ? "medium" : "selection");
       this._saveSettings();
@@ -714,10 +819,14 @@ class PcTrackpadCard extends HTMLElement {
   }
 
   _focusTextInput(clearFirst = false) {
+    if (this._disposed) return;
+
     const input = this.querySelector("#textInput");
     const panel = this.querySelector("#keyboardPanel");
 
-    if (!input) return;
+    if (!input) {
+      return;
+    }
 
     if (panel) {
       panel.open = true;
@@ -736,15 +845,19 @@ class PcTrackpadCard extends HTMLElement {
     try {
       const len = input.value.length;
       input.setSelectionRange(len, len);
-    } catch (_) {}
+    } catch (_) {
+      // ignore
+    }
   }
 
   _clearLocalText(input) {
+    if (this._disposed) return;
+
     this._suppressInput = true;
     input.value = "";
     this._liveTextValue = "";
 
-    window.setTimeout(() => {
+    this._setTimeout(() => {
       this._suppressInput = false;
     }, 0);
   }
@@ -761,27 +874,35 @@ class PcTrackpadCard extends HTMLElement {
   }
 
   _syncLiveText(newText) {
+    if (this._disposed) return;
+
     const oldText = this._liveTextValue || "";
 
-    if (newText === oldText) return;
+    if (newText === oldText) {
+      return;
+    }
 
     const prefixLen = this._commonPrefixLength(oldText, newText);
     const oldTail = oldText.slice(prefixLen);
     const newTail = newText.slice(prefixLen);
-
     const backspaces = oldTail.length;
     const textToWrite = newTail;
 
     this._liveTextValue = newText;
 
     this._queueKeyboard(async () => {
+      if (this._disposed) return;
+
       await this._ensureArmed(10);
 
+      if (this._disposed) return;
+
       for (let i = 0; i < backspaces; i += 1) {
+        if (this._disposed) return;
         await this._keyboardPressNow("backspace");
       }
 
-      if (textToWrite) {
+      if (!this._disposed && textToWrite) {
         await this._keyboardWriteNow(textToWrite);
       }
     });
@@ -789,9 +910,13 @@ class PcTrackpadCard extends HTMLElement {
 
   _queueKeyboard(task) {
     const run = async () => {
+      if (this._disposed) return;
+
       try {
         await task();
-      } catch (_) {}
+      } catch (_) {
+        // service errors should not break future keyboard queue tasks
+      }
     };
 
     this._keyboardQueue = this._keyboardQueue.then(run, run);
@@ -799,6 +924,7 @@ class PcTrackpadCard extends HTMLElement {
   }
 
   _haptic(pattern = "light") {
+    if (this._disposed) return;
     if (!this.settings.haptics) return;
 
     let hapticType = "light";
@@ -808,11 +934,18 @@ class PcTrackpadCard extends HTMLElement {
     } else if (Array.isArray(pattern)) {
       hapticType = "medium";
     } else if (typeof pattern === "number") {
-      hapticType = pattern >= 40 ? "heavy" : pattern >= 25 ? "medium" : pattern >= 10 ? "light" : "selection";
+      hapticType =
+        pattern >= 40 ? "heavy" :
+        pattern >= 25 ? "medium" :
+        pattern >= 10 ? "light" :
+        "selection";
     }
 
     const validTypes = ["success", "warning", "failure", "light", "medium", "heavy", "selection"];
-    if (!validTypes.includes(hapticType)) hapticType = "light";
+
+    if (!validTypes.includes(hapticType)) {
+      hapticType = "light";
+    }
 
     try {
       this.dispatchEvent(
@@ -830,7 +963,9 @@ class PcTrackpadCard extends HTMLElement {
           },
         })
       );
-    } catch (_) {}
+    } catch (_) {
+      // ignore
+    }
 
     try {
       this.dispatchEvent(
@@ -840,7 +975,9 @@ class PcTrackpadCard extends HTMLElement {
           detail: hapticType,
         })
       );
-    } catch (_) {}
+    } catch (_) {
+      // ignore
+    }
 
     try {
       if ("vibrate" in navigator) {
@@ -853,12 +990,17 @@ class PcTrackpadCard extends HTMLElement {
           warning: [30, 40, 30],
           failure: [50, 40, 50],
         };
+
         navigator.vibrate(patterns[hapticType] || 20);
       }
-    } catch (_) {}
+    } catch (_) {
+      // ignore
+    }
   }
 
   async _ensureArmed(seconds = 30) {
+    if (this._disposed) return;
+
     const now = Date.now();
 
     if (now < this._armedUntilMs - 2000) {
@@ -869,7 +1011,9 @@ class PcTrackpadCard extends HTMLElement {
       this._armPromise = this
         ._callBridge(this.config.service_arm, { seconds })
         .then(() => {
-          this._armedUntilMs = Date.now() + seconds * 1000;
+          if (!this._disposed) {
+            this._armedUntilMs = Date.now() + seconds * 1000;
+          }
         })
         .catch(() => {})
         .finally(() => {
@@ -882,7 +1026,10 @@ class PcTrackpadCard extends HTMLElement {
 
   _setActive(active) {
     const pad = this.querySelector("#pad");
-    if (!pad) return;
+
+    if (!pad) {
+      return;
+    }
 
     if (active) {
       pad.classList.add("active");
@@ -907,25 +1054,36 @@ class PcTrackpadCard extends HTMLElement {
   }
 
   _startLoop() {
+    if (this._disposed) return;
     if (this._moveTimer) return;
 
     this._moveTimer = window.setInterval(() => {
+      if (this._disposed) {
+        this._disposeRuntime();
+        return;
+      }
+
       this._flushMove();
       this._flushScroll();
     }, this.settings.frame_ms);
   }
 
   _stopLoop() {
-    if (!this._moveTimer) return;
+    if (!this._moveTimer) {
+      return;
+    }
 
     window.clearInterval(this._moveTimer);
     this._moveTimer = null;
 
-    this._flushMove();
-    this._flushScroll();
+    if (!this._disposed) {
+      this._flushMove();
+      this._flushScroll();
+    }
   }
 
   async _flushMove() {
+    if (this._disposed) return;
     if (this._moveInFlight) return;
 
     const maxStep = Number(this.settings.max_step) || 150;
@@ -933,49 +1091,62 @@ class PcTrackpadCard extends HTMLElement {
     let dx = Math.round(this._pendingDx);
     let dy = Math.round(this._pendingDy);
 
-    if (dx === 0 && dy === 0) return;
+    if (dx === 0 && dy === 0) {
+      return;
+    }
 
     dx = Math.max(-maxStep, Math.min(maxStep, dx));
     dy = Math.max(-maxStep, Math.min(maxStep, dy));
 
     this._pendingDx -= dx;
     this._pendingDy -= dy;
-
     this._moveInFlight = true;
 
     try {
       await this._ensureArmed(30);
-      await this._callBridge(this.config.service_move_relative, { dx, dy });
+
+      if (!this._disposed) {
+        await this._callBridge(this.config.service_move_relative, { dx, dy });
+      }
     } catch (_) {
+      // ignore service errors
     } finally {
       this._moveInFlight = false;
     }
   }
 
   async _flushScroll() {
+    if (this._disposed) return;
     if (this._scrollInFlight) return;
 
     const maxStep = Number(this.settings.scroll_max_step) || 80;
 
     let amount = Math.round(this._pendingScroll);
 
-    if (amount === 0) return;
+    if (amount === 0) {
+      return;
+    }
 
     amount = Math.max(-maxStep, Math.min(maxStep, amount));
-
     this._pendingScroll -= amount;
     this._scrollInFlight = true;
 
     try {
       await this._ensureArmed(30);
-      await this._callBridge(this.config.service_scroll, { amount });
+
+      if (!this._disposed) {
+        await this._callBridge(this.config.service_scroll, { amount });
+      }
     } catch (_) {
+      // ignore service errors
     } finally {
       this._scrollInFlight = false;
     }
   }
 
   _touchStart(ev) {
+    if (this._disposed) return;
+
     ev.preventDefault();
     ev.stopPropagation();
 
@@ -1011,10 +1182,14 @@ class PcTrackpadCard extends HTMLElement {
   }
 
   _touchMove(ev) {
+    if (this._disposed) return;
+
     ev.preventDefault();
     ev.stopPropagation();
 
-    if (!this._gesture || ev.touches.length === 0) return;
+    if (!this._gesture || ev.touches.length === 0) {
+      return;
+    }
 
     const fingers = ev.touches.length;
     const center = this._centerOfTouches(ev.touches);
@@ -1044,6 +1219,8 @@ class PcTrackpadCard extends HTMLElement {
   }
 
   async _touchEnd(ev) {
+    if (this._disposed) return;
+
     ev.preventDefault();
     ev.stopPropagation();
 
@@ -1053,7 +1230,9 @@ class PcTrackpadCard extends HTMLElement {
       return;
     }
 
-    if (ev.touches.length > 0) return;
+    if (ev.touches.length > 0) {
+      return;
+    }
 
     this._stopLoop();
     this._setActive(false);
@@ -1061,14 +1240,13 @@ class PcTrackpadCard extends HTMLElement {
     const duration = Date.now() - this._gesture.startTime;
     const moved = this._gesture.totalMove;
     const fingers = this._gesture.fingers;
-
-    const isTap =
-      duration <= this.config.tap_max_ms &&
-      moved <= this.config.tap_threshold_px;
+    const isTap = duration <= this.config.tap_max_ms && moved <= this.config.tap_threshold_px;
 
     this._gesture = null;
 
-    if (!isTap) return;
+    if (!isTap) {
+      return;
+    }
 
     if (fingers === 1) {
       this._haptic("light");
@@ -1083,6 +1261,8 @@ class PcTrackpadCard extends HTMLElement {
   }
 
   _touchCancel(ev) {
+    if (this._disposed) return;
+
     ev.preventDefault();
     ev.stopPropagation();
 
@@ -1092,16 +1272,21 @@ class PcTrackpadCard extends HTMLElement {
   }
 
   _pointerDown(ev) {
+    if (this._disposed) return;
     if (Date.now() < this._ignorePointerUntil) return;
     if (ev.pointerType === "touch") return;
 
     ev.preventDefault();
 
     const pad = this.querySelector("#pad");
-    pad.setPointerCapture(ev.pointerId);
+
+    try {
+      pad.setPointerCapture(ev.pointerId);
+    } catch (_) {
+      // ignore
+    }
 
     this._setActive(true);
-
     this._dragging = true;
     this._lastX = ev.clientX;
     this._lastY = ev.clientY;
@@ -1115,6 +1300,7 @@ class PcTrackpadCard extends HTMLElement {
   }
 
   _pointerMove(ev) {
+    if (this._disposed) return;
     if (Date.now() < this._ignorePointerUntil) return;
     if (!this._dragging) return;
 
@@ -1132,6 +1318,7 @@ class PcTrackpadCard extends HTMLElement {
   }
 
   async _pointerUp(ev) {
+    if (this._disposed) return;
     if (Date.now() < this._ignorePointerUntil) return;
     if (!this._dragging) return;
 
@@ -1153,6 +1340,8 @@ class PcTrackpadCard extends HTMLElement {
   }
 
   async _click(button) {
+    if (this._disposed) return;
+
     if (button === "left") {
       this._haptic("light");
 
@@ -1166,53 +1355,70 @@ class PcTrackpadCard extends HTMLElement {
     }
 
     await this._ensureArmed(10);
-    await this._callBridge(this.config.service_click, {
-      button,
-      clicks: 1,
-    });
+
+    if (!this._disposed) {
+      await this._callBridge(this.config.service_click, {
+        button,
+        clicks: 1,
+      });
+    }
   }
 
   async _scroll(amount) {
-    this._haptic("selection");
+    if (this._disposed) return;
 
+    this._haptic("selection");
     await this._ensureArmed(10);
-    await this._callBridge(this.config.service_scroll, {
-      amount,
-    });
+
+    if (!this._disposed) {
+      await this._callBridge(this.config.service_scroll, { amount });
+    }
   }
 
   async _keyboardWriteNow(text) {
+    if (this._disposed) return;
     if (!text) return;
 
     await this._ensureArmed(10);
-    await this._callBridge(this.config.service_write, {
-      text,
-      interval: 0,
-    });
+
+    if (!this._disposed) {
+      await this._callBridge(this.config.service_write, {
+        text,
+        interval: 0,
+      });
+    }
   }
 
   async _keyboardPressNow(key) {
+    if (this._disposed) return;
+
     await this._ensureArmed(10);
-    await this._callBridge(this.config.service_press, {
-      key,
-    });
+
+    if (!this._disposed) {
+      await this._callBridge(this.config.service_press, { key });
+    }
   }
 
   async _press(key) {
+    if (this._disposed) return;
+
     this._haptic("light");
     return this._queueKeyboard(() => this._keyboardPressNow(key));
   }
 
   async _hotkey(keys) {
-    this._haptic("medium");
+    if (this._disposed) return;
 
+    this._haptic("medium");
     await this._ensureArmed(10);
-    await this._callBridge(this.config.service_hotkey, {
-      keys,
-    });
+
+    if (!this._disposed) {
+      await this._callBridge(this.config.service_hotkey, { keys });
+    }
   }
 
   async _write(text) {
+    if (this._disposed) return;
     if (!text) return;
 
     this._haptic("light");
@@ -1220,9 +1426,12 @@ class PcTrackpadCard extends HTMLElement {
   }
 }
 
-customElements.define("pc-trackpad-card", PcTrackpadCard);
+if (!customElements.get("pc-trackpad-card")) {
+  customElements.define("pc-trackpad-card", PcTrackpadCard);
+}
 
 window.customCards = window.customCards || [];
+
 window.customCards.push({
   type: "pc-trackpad-card",
   name: "PC Trackpad Card",
