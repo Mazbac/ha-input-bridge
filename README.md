@@ -15,7 +15,7 @@ Normal users do **not** need Python, PowerShell, config files, IP knowledge, or 
 
 ## What HA Input Bridge does
 
-HA Input Bridge has two parts:
+HA Input Bridge has two parts.
 
 ### 1. Windows app
 
@@ -29,10 +29,13 @@ It receives secure input commands from Home Assistant and turns them into:
 - typing text
 - keyboard shortcuts
 
+It supports normal Windows extended display setups, including multiple monitors where one display uses negative desktop coordinates.
+
 The Windows app also adds a tray icon so you can:
 
 - see if the bridge is running
 - start or stop the bridge
+- restart the bridge
 - copy setup info
 - open settings
 - open logs
@@ -42,7 +45,7 @@ The Windows app also adds a tray icon so you can:
 
 The Home Assistant integration connects to the Windows app.
 
-After setup, Home Assistant can send commands to the Windows PC.
+After setup, Home Assistant can send commands to the Windows PC through the bundled trackpad UI and Home Assistant services.
 
 ---
 
@@ -54,13 +57,17 @@ It uses:
 
 - a private token
 - Windows Firewall
-- an arm window before input commands are accepted
+- a temporary arm window before input commands are accepted
+- bounded request sizes
+- bounded mouse, scroll, and text input values
 
 The token is required for Home Assistant to connect.
 
 The bridge also requires Home Assistant to arm it before actual input commands are accepted.
 
 Keep the token private.
+
+Do not expose HA Input Bridge directly to the public internet.
 
 ---
 
@@ -178,7 +185,7 @@ Port: 8765
 Listening mode: Automatic - all local network adapters
 ```
 
-The exact IP address will depend on your Windows PC.
+The exact IP address depends on your Windows PC.
 
 Example:
 
@@ -307,7 +314,9 @@ Test:
 - scroll
 - keyboard input if available
 
-If the cursor moves, setup is complete.
+If you use multiple monitors, test that the cursor can move across all extended displays.
+
+If the cursor moves correctly, setup is complete.
 
 ---
 
@@ -472,6 +481,65 @@ Most users should not need to choose manually. Use **Copy setup info**.
 
 ---
 
+# Multi-monitor support
+
+HA Input Bridge supports Windows extended desktop layouts.
+
+This includes:
+
+- two or more monitors
+- monitors positioned left or right of the primary display
+- virtual desktop coordinates with negative X values
+- mixed extended display layouts exposed by Windows
+
+Example detected virtual desktop:
+
+```json
+{
+  "left": -2560,
+  "top": 0,
+  "right": 2559,
+  "bottom": 1439,
+  "width": 5120,
+  "height": 1440
+}
+```
+
+This means Windows exposes one combined virtual desktop of `5120x1440`.
+
+The cursor should be able to move across all active extended displays.
+
+---
+
+# Trackpad tuning
+
+The trackpad is tuned for smoother movement by default.
+
+The Settings panel inside the Home Assistant trackpad card includes:
+
+- mouse speed
+- scroll speed
+- max mouse step
+- max scroll step
+- frame interval
+- haptic feedback
+- live typing
+- auto-open keyboard behavior
+
+For smoother movement:
+
+```text
+Lower frame interval = more frequent updates
+Higher max mouse step = larger movement range per update
+Higher mouse speed = faster cursor movement
+```
+
+Defaults are chosen to balance smoothness and reliability.
+
+If movement feels too fast or too slow, adjust Mouse speed first.
+
+---
+
 # Updating
 
 To update HA Input Bridge:
@@ -508,6 +576,7 @@ Generate a new token if:
 
 - the token was shared accidentally
 - you posted screenshots showing the token
+- you pasted the token into a public chat
 - you want to reset access
 
 ---
@@ -603,6 +672,38 @@ Use the local network host unless Home Assistant connects over Tailscale.
 
 ---
 
+## Cursor only moves on one monitor
+
+Update to v0.5.0 or newer.
+
+HA Input Bridge uses Windows virtual desktop bounds, so extended displays should work, including monitors positioned to the left of the primary display.
+
+You can check the detected virtual desktop from PowerShell:
+
+```powershell
+$config = Get-Content "$env:ProgramData\HA Input Bridge\config.json" | ConvertFrom-Json
+$headers = @{ "X-HA-Token" = $config.token }
+Invoke-RestMethod -Uri "http://127.0.0.1:8765/position" -Headers $headers -Method Get |
+  ConvertTo-Json -Depth 5
+```
+
+For two 2560x1440 monitors side by side, a valid response may look like:
+
+```json
+{
+  "left": -2560,
+  "top": 0,
+  "right": 2559,
+  "bottom": 1439,
+  "width": 5120,
+  "height": 1440
+}
+```
+
+If `width` only shows one monitor, Windows is not exposing the extended desktop correctly to the bridge process.
+
+---
+
 ## Trackpad does not move the mouse
 
 Check:
@@ -613,6 +714,30 @@ Check:
 4. Token matches.
 5. Windows Firewall allows the local subnet or Home Assistant IP.
 6. Home Assistant and Windows are on the same network.
+
+---
+
+## Trackpad movement feels choppy
+
+Open the trackpad settings in Home Assistant.
+
+Try:
+
+```text
+Mouse speed: increase slightly
+Max mouse step: increase
+Frame interval: decrease
+```
+
+Avoid setting the frame interval extremely low on slow Home Assistant hardware.
+
+Recommended starting point:
+
+```text
+Frame interval: 12ms
+Mouse speed: 2.8x
+Max mouse step: 650px
+```
 
 ---
 
@@ -664,6 +789,32 @@ ha_input_bridge.log
 task_runtime.log
 ```
 
+Logs are rotated to limit disk growth.
+
+---
+
+# Maintenance and hardening
+
+HA Input Bridge includes several hardening measures:
+
+- token authentication
+- temporary arm window
+- Windows Firewall rule
+- local subnet firewall scope by default
+- request body size limit
+- bounded mouse movement values
+- bounded scroll values
+- bounded text input length
+- rotating log files
+- frontend runtime cleanup
+- Home Assistant config-entry runtime cleanup
+- tray process single-instance handling
+- settings process single-instance handling
+
+These controls reduce risk and resource growth.
+
+They do not make the bridge safe to expose publicly.
+
 ---
 
 # Developer notes
@@ -686,6 +837,12 @@ Windows installer source:
 windows/installer/
 ```
 
+Bundled Home Assistant frontend files:
+
+```text
+custom_components/ha_input_bridge/www/
+```
+
 The Windows installer is built with GitHub Actions.
 
 ---
@@ -698,12 +855,17 @@ Before publishing a release:
 1. Windows installer workflow is green
 2. Fresh Windows install works
 3. Tray process count is correct
-4. Copy setup info works
-5. Home Assistant setup accepts pasted setup info
-6. Trackpad works
-7. README is updated
-8. Tag is created
-9. GitHub Release includes the Windows installer
+4. Settings process count is correct
+5. Copy setup info works
+6. Home Assistant setup accepts pasted setup info
+7. Trackpad works
+8. Multi-monitor cursor movement works
+9. Windows logs rotate
+10. Home Assistant logs show no HA Input Bridge errors
+11. README is updated
+12. SECURITY.md is updated
+13. Tag is created
+14. GitHub Release includes the Windows installer
 ```
 
 ---
