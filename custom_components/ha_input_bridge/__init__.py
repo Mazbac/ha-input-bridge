@@ -53,11 +53,11 @@ SERVICE_MOVE_SCHEMA = vol.Schema(
     {
         vol.Required("x"): vol.All(
             vol.Coerce(int),
-            vol.Range(min=0, max=10000),
+            vol.Range(min=-100000, max=100000),
         ),
         vol.Required("y"): vol.All(
             vol.Coerce(int),
-            vol.Range(min=0, max=10000),
+            vol.Range(min=-100000, max=100000),
         ),
     }
 )
@@ -66,11 +66,11 @@ SERVICE_MOVE_RELATIVE_SCHEMA = vol.Schema(
     {
         vol.Required("dx"): vol.All(
             vol.Coerce(int),
-            vol.Range(min=-300, max=300),
+            vol.Range(min=-1000, max=1000),
         ),
         vol.Required("dy"): vol.All(
             vol.Coerce(int),
-            vol.Range(min=-300, max=300),
+            vol.Range(min=-1000, max=1000),
         ),
     }
 )
@@ -91,7 +91,7 @@ SERVICE_SCROLL_SCHEMA = vol.Schema(
     {
         vol.Required("amount"): vol.All(
             vol.Coerce(int),
-            vol.Range(min=-80, max=80),
+            vol.Range(min=-120, max=120),
         ),
     }
 )
@@ -184,15 +184,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             raise HomeAssistantError(str(err)) from err
 
     async def handle_arm(call: ServiceCall) -> None:
-        """Handle arm service."""
         await call_bridge("arm", call.data["seconds"])
 
     async def handle_position(call: ServiceCall) -> ServiceResponse:
-        """Handle position service."""
         return await call_bridge("position")
 
     async def handle_move(call: ServiceCall) -> None:
-        """Handle absolute mouse move service."""
         await call_bridge(
             "move",
             call.data["x"],
@@ -200,7 +197,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         )
 
     async def handle_move_relative(call: ServiceCall) -> None:
-        """Handle relative mouse move service."""
         await call_bridge(
             "move_relative",
             call.data["dx"],
@@ -208,7 +204,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         )
 
     async def handle_click(call: ServiceCall) -> None:
-        """Handle click service."""
         await call_bridge(
             "click",
             call.data["button"],
@@ -216,14 +211,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         )
 
     async def handle_scroll(call: ServiceCall) -> None:
-        """Handle scroll service."""
         await call_bridge(
             "scroll",
             call.data["amount"],
         )
 
     async def handle_write(call: ServiceCall) -> None:
-        """Handle write service."""
         await call_bridge(
             "write",
             call.data["text"],
@@ -231,14 +224,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         )
 
     async def handle_press(call: ServiceCall) -> None:
-        """Handle press service."""
         await call_bridge(
             "press",
             call.data["key"],
         )
 
     async def handle_hotkey(call: ServiceCall) -> None:
-        """Handle hotkey service."""
         await call_bridge(
             "hotkey",
             call.data["keys"],
