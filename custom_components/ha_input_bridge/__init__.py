@@ -20,7 +20,6 @@ from homeassistant.helpers.typing import ConfigType
 from .api import BridgeApiError, CannotConnect, HAInputBridgeClient, InvalidAuth
 from .const import DEFAULT_TIMEOUT, DOMAIN
 
-
 CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)
 
 SERVICE_ARM = "arm"
@@ -38,7 +37,6 @@ PANEL_URL_PATH = "/ha_input_bridge/pc-trackpad-panel.js"
 
 CARD_FILE = Path(__file__).parent / "www" / "pc-trackpad-card.js"
 PANEL_FILE = Path(__file__).parent / "www" / "pc-trackpad-panel.js"
-
 
 SERVICE_ARM_SCHEMA = vol.Schema(
     {
@@ -127,8 +125,6 @@ SERVICE_HOTKEY_SCHEMA = vol.Schema(
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up HA Input Bridge services and bundled frontend UI."""
-    hass.data.setdefault(DOMAIN, {})
-
     await hass.http.async_register_static_paths(
         [
             StaticPathConfig(
@@ -165,22 +161,13 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     async def get_client() -> HAInputBridgeClient:
         """Return the first loaded bridge client."""
-        entries = hass.data.get(DOMAIN, {})
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            client = getattr(entry, "runtime_data", None)
 
-        if not entries:
-            raise ServiceValidationError(
-                "No HA Input Bridge instance is configured"
-            )
+            if isinstance(client, HAInputBridgeClient):
+                return client
 
-        first_entry = next(iter(entries.values()))
-        client = first_entry.get("client")
-
-        if client is None:
-            raise ServiceValidationError(
-                "HA Input Bridge instance is not loaded"
-            )
-
-        return client
+        raise ServiceValidationError("No loaded HA Input Bridge instance is configured")
 
     async def call_bridge(method_name: str, *args: Any) -> dict[str, Any]:
         """Call a bridge API method and convert errors for Home Assistant."""
@@ -336,17 +323,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         timeout_seconds=DEFAULT_TIMEOUT,
     )
 
-    hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN][entry.entry_id] = {
-        "entry": entry,
-        "client": client,
-    }
+    entry.runtime_data = client
 
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload HA Input Bridge config entry."""
-    hass.data[DOMAIN].pop(entry.entry_id, None)
+    entry.runtime_data = None
 
     return True
