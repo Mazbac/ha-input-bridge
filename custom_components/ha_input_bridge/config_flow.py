@@ -16,11 +16,12 @@ from .api import CannotConnect, HAInputBridgeClient, InvalidAuth
 from .const import DEFAULT_NAME, DEFAULT_PORT, DEFAULT_TIMEOUT, DOMAIN
 
 CONF_SETUP_INFO = "setup_info"
+MAX_SETUP_INFO_LENGTH = 2000
 
 
 def parse_setup_info(setup_info: str) -> dict[str, Any]:
     """Parse setup info copied from the Windows tray app."""
-    text = setup_info.strip()
+    text = setup_info.strip()[:MAX_SETUP_INFO_LENGTH]
 
     host = ""
     port = DEFAULT_PORT
@@ -65,49 +66,52 @@ class HAInputBridgeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             name = user_input[CONF_NAME].strip() or DEFAULT_NAME
             setup_info = user_input[CONF_SETUP_INFO].strip()
 
-            parsed = parse_setup_info(setup_info)
-
-            host = str(parsed[CONF_HOST]).strip()
-            port = int(parsed[CONF_PORT])
-            token = str(parsed[CONF_TOKEN]).strip()
-
-            if not host:
-                errors["base"] = "missing_host"
-            elif not token:
-                errors["base"] = "missing_token"
-            elif port < 1 or port > 65535:
-                errors["base"] = "invalid_port"
+            if len(setup_info) > MAX_SETUP_INFO_LENGTH:
+                errors["base"] = "setup_info_too_long"
             else:
-                await self.async_set_unique_id(f"{host}:{port}")
-                self._abort_if_unique_id_configured()
+                parsed = parse_setup_info(setup_info)
 
-                session = async_get_clientsession(self.hass)
-                client = HAInputBridgeClient(
-                    session=session,
-                    host=host,
-                    port=port,
-                    token=token,
-                    timeout_seconds=DEFAULT_TIMEOUT,
-                )
+                host = str(parsed[CONF_HOST]).strip()
+                port = int(parsed[CONF_PORT])
+                token = str(parsed[CONF_TOKEN]).strip()
 
-                try:
-                    await client.health()
-                except CannotConnect:
-                    errors["base"] = "cannot_connect"
-                except InvalidAuth:
-                    errors["base"] = "invalid_auth"
-                except Exception:
-                    errors["base"] = "unknown"
+                if not host:
+                    errors["base"] = "missing_host"
+                elif not token:
+                    errors["base"] = "missing_token"
+                elif port < 1 or port > 65535:
+                    errors["base"] = "invalid_port"
                 else:
-                    return self.async_create_entry(
-                        title=name,
-                        data={
-                            CONF_NAME: name,
-                            CONF_HOST: host,
-                            CONF_PORT: port,
-                            CONF_TOKEN: token,
-                        },
+                    await self.async_set_unique_id(f"{host}:{port}")
+                    self._abort_if_unique_id_configured()
+
+                    session = async_get_clientsession(self.hass)
+                    client = HAInputBridgeClient(
+                        session=session,
+                        host=host,
+                        port=port,
+                        token=token,
+                        timeout_seconds=DEFAULT_TIMEOUT,
                     )
+
+                    try:
+                        await client.health()
+                    except CannotConnect:
+                        errors["base"] = "cannot_connect"
+                    except InvalidAuth:
+                        errors["base"] = "invalid_auth"
+                    except Exception:
+                        errors["base"] = "unknown"
+                    else:
+                        return self.async_create_entry(
+                            title=name,
+                            data={
+                                CONF_NAME: name,
+                                CONF_HOST: host,
+                                CONF_PORT: port,
+                                CONF_TOKEN: token,
+                            },
+                        )
 
         data_schema = vol.Schema(
             {
