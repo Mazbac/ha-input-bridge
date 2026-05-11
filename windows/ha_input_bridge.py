@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import json
 import logging
 import os
@@ -21,14 +22,19 @@ DEFAULT_CONFIG_FILE = DEFAULT_DATA_DIR / "config.json"
 DEFAULT_LOG_FILE = DEFAULT_DATA_DIR / "ha_input_bridge.log"
 
 SAFE_MARGIN = 2
-MAX_ABSOLUTE_XY = 10000
-MAX_RELATIVE_STEP = 300
+MAX_ABSOLUTE_XY = 100000
+MAX_RELATIVE_STEP = 1000
 MAX_SCROLL_AMOUNT = 120
 MAX_TEXT_LENGTH = 500
 MAX_REQUEST_BODY_BYTES = 16 * 1024
 
 LOG_MAX_BYTES = 1 * 1024 * 1024
 LOG_BACKUP_COUNT = 3
+
+SM_XVIRTUALSCREEN = 76
+SM_YVIRTUALSCREEN = 77
+SM_CXVIRTUALSCREEN = 78
+SM_CYVIRTUALSCREEN = 79
 
 ALLOWED_KEYS = {
     "ctrl",
@@ -93,7 +99,26 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_REQUEST_BODY_BYTES
 armed_until = 0.0
 
 pyautogui.FAILSAFE = False
-pyautogui.PAUSE = 0.01
+pyautogui.PAUSE = 0.0
+
+
+def set_process_dpi_aware() -> None:
+    if os.name != "nt":
+        return
+
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        return
+    except Exception:
+        pass
+
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
+
+set_process_dpi_aware()
 
 
 def load_config() -> dict[str, Any]:
@@ -183,18 +208,49 @@ def clamp(value: int | float, low: int | float, high: int | float) -> int | floa
     return max(low, min(high, value))
 
 
-def screen_size() -> tuple[int, int]:
+def virtual_screen_bounds() -> tuple[int, int, int, int]:
+    if os.name == "nt":
+        try:
+            user32 = ctypes.windll.user32
+            left = int(user32.GetSystemMetrics(SM_XVIRTUALSCREEN))
+            top = int(user32.GetSystemMetrics(SM_YVIRTUALSCREEN))
+            width = int(user32.GetSystemMetrics(SM_CXVIRTUALSCREEN))
+            height = int(user32.GetSystemMetrics(SM_CYVIRTUALSCREEN))
+
+            if width > 0 and height > 0:
+                return left, top, width, height
+        except Exception:
+            pass
+
     width, height = pyautogui.size()
+    return 0, 0, int(width), int(height)
+
+
+def virtual_screen_rect() -> tuple[int, int, int, int, int, int]:
+    left, top, width, height = virtual_screen_bounds()
+    right = left + width - 1
+    bottom = top + height - 1
+    return left, top, right, bottom, width, height
+
+
+def screen_size() -> tuple[int, int]:
+    _, _, width, height = virtual_screen_bounds()
     return int(width), int(height)
 
 
 def clamp_screen_position(x: int | float, y: int | float) -> tuple[int, int]:
-    width, height = screen_size()
+    left, top, right, bottom, _, _ = virtual_screen_rect()
 
-    min_x = SAFE_MARGIN
-    min_y = SAFE_MARGIN
-    max_x = max(SAFE_MARGIN, width - 1 - SAFE_MARGIN)
-    max_y = max(SAFE_MARGIN, height - 1 - SAFE_MARGIN)
+    min_x = left + SAFE_MARGIN
+    min_y = top + SAFE_MARGIN
+    max_x = right - SAFE_MARGIN
+    max_y = bottom - SAFE_MARGIN
+
+    if max_x < min_x:
+        max_x = min_x
+
+    if max_y < min_y:
+        max_y = min_y
 
     return (
         int(clamp(int(x), min_x, max_x)),
@@ -289,7 +345,6 @@ def request_json() -> dict[str, Any]:
 
 @app.errorhandler(400)
 @app.errorhandler(403)
-@app.errorhandler(413)
 @app.errorhandler(423)
 def handle_known_error(error: Any):
     return jsonify(ok=False, error=str(error.description)), error.code
@@ -310,9 +365,19 @@ def handle_unexpected_error(error: Exception):
 def health():
     require_security()
 
+    left, top, right, bottom, width, height = virtual_screen_rect()
+
     return jsonify(
         ok=True,
         service=APP_NAME,
+        screen={
+            "left": left,
+            "top": top,
+            "right": right,
+            "bottom": bottom,
+            "width": width,
+            "height": height,
+        },
     )
 
 
@@ -321,12 +386,16 @@ def position():
     require_security()
 
     x, y = pyautogui.position()
-    width, height = screen_size()
+    left, top, right, bottom, width, height = virtual_screen_rect()
 
     return jsonify(
         ok=True,
         x=int(x),
         y=int(y),
+        left=left,
+        top=top,
+        right=right,
+        bottom=bottom,
         width=width,
         height=height,
         safe_margin=SAFE_MARGIN,
@@ -401,8 +470,8 @@ def input_command():
 
 def handle_mouse_action(action: str | None, data: dict[str, Any]) -> None:
     if action == "move":
-        x = int(clamp(int(data["x"]), 0, MAX_ABSOLUTE_XY))
-        y = int(clamp(int(data["y"]), 0, MAX_ABSOLUTE_XY))
+        x = int(clamp(int(data["x"]), -MAX_ABSOLUTE_XY, MAX_ABSOLUTE_XY))
+        y = int(clamp(int(data["y"]), -MAX_ABSOLUTE_XY, MAX_ABSOLUTE_XY))
         safe_move_to(x, y)
         return
 
