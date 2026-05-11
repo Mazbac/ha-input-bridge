@@ -37,12 +37,53 @@ CONNECTION_INFO_NAME = "connection-info.txt"
 UNINSTALL_EXE_NAME = "unins000.exe"
 
 DEFAULT_PORT = 8765
-STATUS_POLL_SECONDS = 5
+STATUS_POLL_SECONDS = 15
 
 _SINGLE_INSTANCE_MUTEX = None
+_SETTINGS_INSTANCE_MUTEX = None
+
 _STATUS_LOCK = threading.Lock()
 _STATUS_RUNNING = False
 _STATUS_TEXT = "Status: checking..."
+
+_ICON_CACHE: dict[bool, Image.Image] = {}
+
+
+def ps_quote(value: str | Path) -> str:
+    text = str(value).replace("'", "''")
+    return f"'{text}'"
+
+
+def run_powershell(script: str, wait: bool = True) -> subprocess.CompletedProcess[str] | subprocess.Popen:
+    creationflags = 0
+
+    if os.name == "nt":
+        creationflags = subprocess.CREATE_NO_WINDOW
+
+    command = [
+        "powershell.exe",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        script,
+    ]
+
+    if wait:
+        return subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            creationflags=creationflags,
+            check=False,
+        )
+
+    return subprocess.Popen(
+        command,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=creationflags,
+    )
 
 
 def acquire_single_instance_lock() -> bool:
@@ -79,6 +120,47 @@ Get-CimInstance Win32_Process |
     last_error = kernel32.GetLastError()
 
     _SINGLE_INSTANCE_MUTEX = mutex
+
+    if not mutex:
+        return True
+
+    return last_error != 183
+
+
+def acquire_settings_instance_lock() -> bool:
+    global _SETTINGS_INSTANCE_MUTEX
+
+    if os.name != "nt":
+        return True
+
+    current_pid = os.getpid()
+
+    cleanup_script = f"""
+Get-CimInstance Win32_Process |
+  Where-Object {{
+    $_.Name -eq '{TRAY_EXE_NAME}' -and
+    $_.ProcessId -ne {current_pid} -and
+    $_.CommandLine -like '*--settings*'
+  }} |
+  ForEach-Object {{
+    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+  }}
+"""
+
+    try:
+        run_powershell(cleanup_script)
+    except Exception:
+        pass
+
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
+    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    kernel32.GetLastError.restype = ctypes.c_ulong
+
+    mutex = kernel32.CreateMutexW(None, True, "Local\\HAInputBridgeSettingsSingleInstance")
+    last_error = kernel32.GetLastError()
+
+    _SETTINGS_INSTANCE_MUTEX = mutex
 
     if not mutex:
         return True
@@ -362,43 +444,6 @@ def read_bridge_port() -> int:
         return DEFAULT_PORT
 
     return port
-
-
-def ps_quote(value: str | Path) -> str:
-    text = str(value).replace("'", "''")
-    return f"'{text}'"
-
-
-def run_powershell(script: str, wait: bool = True) -> subprocess.CompletedProcess[str] | subprocess.Popen:
-    creationflags = 0
-
-    if os.name == "nt":
-        creationflags = subprocess.CREATE_NO_WINDOW
-
-    command = [
-        "powershell.exe",
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        script,
-    ]
-
-    if wait:
-        return subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            creationflags=creationflags,
-            check=False,
-        )
-
-    return subprocess.Popen(
-        command,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        creationflags=creationflags,
-    )
 
 
 def set_clipboard_text(text: str, root: tk.Tk | tk.Toplevel | None = None) -> bool:
@@ -733,6 +778,9 @@ def run_uninstaller(icon: pystray.Icon) -> None:
 
 
 def create_icon_image(running: bool) -> Image.Image:
+    if running in _ICON_CACHE:
+        return _ICON_CACHE[running]
+
     image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
 
@@ -744,6 +792,7 @@ def create_icon_image(running: bool) -> Image.Image:
     draw.rectangle((26, 32, 38, 44), fill=(255, 255, 255, 255))
     draw.rectangle((20, 46, 44, 50), fill=(255, 255, 255, 255))
 
+    _ICON_CACHE[running] = image
     return image
 
 
@@ -754,21 +803,30 @@ def notify(icon: pystray.Icon, message: str) -> None:
         pass
 
 
-def refresh_icon(icon: pystray.Icon) -> None:
+def refresh_icon(icon: pystray.Icon, force: bool = False) -> None:
     running = get_cached_status_running()
-    icon.icon = create_icon_image(running)
-    icon.title = f"{APP_NAME} - {'running' if running else 'stopped'}"
+    title = f"{APP_NAME} - {'running' if running else 'stopped'}"
 
-    try:
-        icon.update_menu()
-    except Exception:
-        pass
+    if force or icon.title != title:
+        icon.icon = create_icon_image(running)
+        icon.title = title
+
+        try:
+            icon.update_menu()
+        except Exception:
+            pass
 
 
 def status_monitor(icon: pystray.Icon) -> None:
+    last_running: bool | None = None
+
     while True:
-        update_status_cache()
-        refresh_icon(icon)
+        running = update_status_cache()
+
+        if running != last_running:
+            refresh_icon(icon, force=True)
+            last_running = running
+
         time.sleep(STATUS_POLL_SECONDS)
 
 
@@ -783,7 +841,7 @@ def run_async_operation(
 
     def worker() -> None:
         ok = operation()
-        refresh_icon(icon)
+        refresh_icon(icon, force=True)
         notify(icon, success_message if ok else failure_message)
 
     threading.Thread(target=worker, daemon=True).start()
@@ -1069,6 +1127,9 @@ def build_menu() -> pystray.Menu:
 
 def main() -> None:
     if "--settings" in sys.argv:
+        if not acquire_settings_instance_lock():
+            return
+
         update_status_cache()
         open_settings_window()
         return
