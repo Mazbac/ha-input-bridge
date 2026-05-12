@@ -150,6 +150,35 @@ class HAInputBridgeClient:
             }
         )
 
+    async def mouse_down(self, button: str = "left") -> dict[str, Any]:
+        """Press and hold a mouse button."""
+        return await self.input(
+            {
+                "type": "mouse",
+                "action": "down",
+                "button": str(button),
+            }
+        )
+
+    async def mouse_up(self, button: str = "left") -> dict[str, Any]:
+        """Release a mouse button."""
+        return await self.input(
+            {
+                "type": "mouse",
+                "action": "up",
+                "button": str(button),
+            }
+        )
+
+    async def release_all(self) -> dict[str, Any]:
+        """Release all supported mouse buttons."""
+        return await self.input(
+            {
+                "type": "mouse",
+                "action": "release_all",
+            }
+        )
+
     async def scroll(self, amount: int) -> dict[str, Any]:
         """Scroll at the current mouse position."""
         return await self.input(
