@@ -5,10 +5,11 @@ from PyInstaller.utils.hooks import collect_submodules
 hiddenimports = []
 hiddenimports += collect_submodules("pystray")
 hiddenimports += collect_submodules("PIL")
+hiddenimports += collect_submodules("pynput")
 
 a = Analysis(
     ["../ha_input_bridge_tray.py"],
-    pathex=[],
+    pathex=[".."],
     binaries=[],
     datas=[],
     hiddenimports=hiddenimports,
