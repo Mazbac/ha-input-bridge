@@ -20,6 +20,8 @@ from typing import Any, Callable
 import pystray
 from PIL import Image, ImageDraw
 
+from ha_input_bridge_recorder import HAInputBridgeRecorder, RecorderError, RecordingMode
+
 try:
     import tkinter as tk
     from tkinter import messagebox, ttk
@@ -42,10 +44,13 @@ DEFAULT_PORT = 8765
 STATUS_POLL_SECONDS = 15
 COORDINATE_POLL_SECONDS = 1.0
 COORDINATE_WINDOW_POLL_MS = 250
+RECORDER_WINDOW_POLL_MS = 250
+RECORDER_COUNTDOWN_SECONDS = 3
 
 _SINGLE_INSTANCE_MUTEX = None
 _SETTINGS_INSTANCE_MUTEX = None
 _COORDS_INSTANCE_MUTEX = None
+_RECORDER_INSTANCE_MUTEX = None
 
 _STATUS_LOCK = threading.Lock()
 _STATUS_RUNNING = False
@@ -109,7 +114,8 @@ Get-CimInstance Win32_Process |
     $_.Name -eq '{TRAY_EXE_NAME}' -and
     $_.ProcessId -ne {current_pid} -and
     $_.CommandLine -notlike '*--settings*' -and
-    $_.CommandLine -notlike '*--coords*'
+    $_.CommandLine -notlike '*--coords*' -and
+    $_.CommandLine -notlike '*--recorder*'
   }} |
   ForEach-Object {{
     Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
@@ -219,6 +225,47 @@ Get-CimInstance Win32_Process |
     return last_error != 183
 
 
+def acquire_recorder_instance_lock() -> bool:
+    global _RECORDER_INSTANCE_MUTEX
+
+    if os.name != "nt":
+        return True
+
+    current_pid = os.getpid()
+
+    cleanup_script = f"""
+Get-CimInstance Win32_Process |
+  Where-Object {{
+    $_.Name -eq '{TRAY_EXE_NAME}' -and
+    $_.ProcessId -ne {current_pid} -and
+    $_.CommandLine -like '*--recorder*'
+  }} |
+  ForEach-Object {{
+    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+  }}
+"""
+
+    try:
+        run_powershell(cleanup_script)
+    except Exception:
+        pass
+
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
+    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    kernel32.GetLastError.restype = ctypes.c_ulong
+
+    mutex = kernel32.CreateMutexW(None, True, "Local\\HAInputBridgeRecorderSingleInstance")
+    last_error = kernel32.GetLastError()
+
+    _RECORDER_INSTANCE_MUTEX = mutex
+
+    if not mutex:
+        return True
+
+    return last_error != 183
+
+
 def get_install_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
@@ -228,6 +275,10 @@ def get_install_dir() -> Path:
 
 def get_data_dir() -> Path:
     return Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "HA Input Bridge"
+
+
+def get_recordings_dir() -> Path:
+    return get_data_dir() / "recordings"
 
 
 def get_config_path() -> Path:
@@ -446,6 +497,9 @@ def write_connection_info(config: dict[str, Any]) -> None:
             "Logs:",
             str(get_data_dir()),
             "",
+            "Recordings:",
+            str(get_recordings_dir()),
+            "",
             "Home Assistant setup:",
             "Settings -> Devices & services -> Add integration -> HA Input Bridge",
             "",
@@ -604,6 +658,17 @@ def get_mouse_position_data(timeout_seconds: float = 0.75) -> dict[str, Any] | N
         return None
 
     return data
+
+
+def get_virtual_desktop_data() -> dict[str, Any]:
+    data = get_mouse_position_data(timeout_seconds=0.75)
+
+    if not data:
+        return {}
+
+    keys = ("left", "top", "right", "bottom", "width", "height")
+
+    return {key: data.get(key) for key in keys}
 
 
 def format_coordinate_text(data: dict[str, Any] | None) -> str:
@@ -1023,6 +1088,12 @@ def open_logs_folder() -> None:
     os.startfile(path)
 
 
+def open_recordings_folder() -> None:
+    path = get_recordings_dir()
+    path.mkdir(parents=True, exist_ok=True)
+    os.startfile(path)
+
+
 def open_install_folder() -> None:
     path = get_install_dir()
 
@@ -1124,6 +1195,14 @@ def launch_coordinates_window() -> None:
     subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--coords"])
 
 
+def launch_recorder_window(mode: RecordingMode) -> None:
+    if getattr(sys, "frozen", False):
+        subprocess.Popen([str(get_tray_path()), "--recorder", mode], cwd=str(get_install_dir()))
+        return
+
+    subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--recorder", mode])
+
+
 def copy_setup_info_from_tray(icon: pystray.Icon) -> None:
     config = load_config()
     text = build_setup_info_text(config)
@@ -1173,14 +1252,29 @@ def open_coordinates_window() -> None:
         sticky="w",
     )
 
-    coords_label = ttk.Label(main, textvariable=coords_var, font=("Consolas", 18, "bold"))
-    coords_label.grid(row=1, column=0, columnspan=3, sticky="w", pady=(10, 0))
+    ttk.Label(main, textvariable=coords_var, font=("Consolas", 18, "bold")).grid(
+        row=1,
+        column=0,
+        columnspan=3,
+        sticky="w",
+        pady=(10, 0),
+    )
 
-    bounds_label = ttk.Label(main, textvariable=bounds_var, font=("Consolas", 9))
-    bounds_label.grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
+    ttk.Label(main, textvariable=bounds_var, font=("Consolas", 9)).grid(
+        row=2,
+        column=0,
+        columnspan=3,
+        sticky="w",
+        pady=(8, 0),
+    )
 
-    status_label = ttk.Label(main, textvariable=status_var)
-    status_label.grid(row=3, column=0, columnspan=3, sticky="w", pady=(8, 0))
+    ttk.Label(main, textvariable=status_var).grid(
+        row=3,
+        column=0,
+        columnspan=3,
+        sticky="w",
+        pady=(8, 0),
+    )
 
     latest_data: dict[str, Any] | None = None
 
@@ -1257,6 +1351,250 @@ def open_coordinates_window() -> None:
     ttk.Button(bottom, text="Close", command=root.destroy).grid(row=0, column=0)
 
     refresh()
+    root.mainloop()
+
+
+def open_recorder_window(mode: RecordingMode) -> None:
+    if tk is None or ttk is None or messagebox is None:
+        return
+
+    if mode == "mouse_keyboard":
+        temp = tk.Tk()
+        temp.withdraw()
+        allowed = messagebox.askokcancel(
+            APP_NAME,
+            "Keyboard recording can capture sensitive text.\n\n"
+            "Do not type passwords, tokens, private messages, or anything you would not want stored in YAML.\n\n"
+            "Continue with mouse + keyboard recording?",
+            parent=temp,
+        )
+        temp.destroy()
+
+        if not allowed:
+            return
+
+    root = tk.Tk()
+    root.title("HA Input Bridge - Script Recorder")
+    root.resizable(False, False)
+    root.attributes("-topmost", True)
+
+    recorder: HAInputBridgeRecorder | None = None
+    recording_finished = False
+    latest_yaml = ""
+    latest_path: Path | None = None
+
+    main = ttk.Frame(root, padding=14)
+    main.grid(row=0, column=0, sticky="nsew")
+
+    title_var = tk.StringVar(value="Home Assistant script recorder")
+    mode_var = tk.StringVar(
+        value="Mode: Mouse only" if mode == "mouse" else "Mode: Mouse + keyboard"
+    )
+    status_var = tk.StringVar(value=f"Starting in {RECORDER_COUNTDOWN_SECONDS}...")
+    stats_var = tk.StringVar(value="")
+    last_file_var = tk.StringVar(value="")
+    clipboard_var = tk.StringVar(value="")
+
+    ttk.Label(main, textvariable=title_var, font=("Segoe UI", 12, "bold")).grid(
+        row=0,
+        column=0,
+        columnspan=4,
+        sticky="w",
+    )
+
+    ttk.Label(main, textvariable=mode_var).grid(
+        row=1,
+        column=0,
+        columnspan=4,
+        sticky="w",
+        pady=(6, 0),
+    )
+
+    ttk.Label(main, textvariable=status_var, font=("Segoe UI", 11, "bold")).grid(
+        row=2,
+        column=0,
+        columnspan=4,
+        sticky="w",
+        pady=(10, 0),
+    )
+
+    ttk.Label(main, textvariable=stats_var).grid(
+        row=3,
+        column=0,
+        columnspan=4,
+        sticky="w",
+        pady=(6, 0),
+    )
+
+    ttk.Label(main, textvariable=last_file_var, wraplength=560).grid(
+        row=4,
+        column=0,
+        columnspan=4,
+        sticky="w",
+        pady=(6, 0),
+    )
+
+    ttk.Label(main, textvariable=clipboard_var).grid(
+        row=5,
+        column=0,
+        columnspan=4,
+        sticky="w",
+        pady=(6, 0),
+    )
+
+    preview = tk.Text(main, width=82, height=18, wrap="none")
+    preview.grid(row=6, column=0, columnspan=4, sticky="nsew", pady=(10, 0))
+    preview.configure(state="disabled")
+
+    def format_duration(duration_ms: int) -> str:
+        seconds = max(0, int(duration_ms / 1000))
+        minutes = int(seconds / 60)
+        seconds = seconds % 60
+        return f"{minutes:02d}:{seconds:02d}"
+
+    def set_preview(text: str) -> None:
+        preview.configure(state="normal")
+        preview.delete("1.0", "end")
+        preview.insert("1.0", text)
+        preview.configure(state="disabled")
+
+    def recorder_ignore_rect() -> tuple[int, int, int, int]:
+        root.update_idletasks()
+        left = int(root.winfo_rootx())
+        top = int(root.winfo_rooty())
+        right = left + int(root.winfo_width())
+        bottom = top + int(root.winfo_height())
+        return left, top, right, bottom
+
+    def update_ignore_rect() -> None:
+        if recorder and recorder.is_recording:
+            recorder.set_ignore_rects([recorder_ignore_rect()])
+
+    def update_status() -> None:
+        if recorder and recorder.is_recording:
+            update_ignore_rect()
+            status = recorder.get_status()
+
+            stats_var.set(
+                "Duration: "
+                f"{format_duration(int(status.get('duration_ms', 0)))}   "
+                f"Events: {status.get('action_count', 0)}   "
+                f"Mouse: x={status.get('last_mouse_x')}, y={status.get('last_mouse_y')}"
+            )
+
+        root.after(RECORDER_WINDOW_POLL_MS, update_status)
+
+    def start_recording_now() -> None:
+        nonlocal recorder
+
+        virtual_desktop = get_virtual_desktop_data()
+
+        recorder = HAInputBridgeRecorder(
+            recordings_dir=get_recordings_dir(),
+            mode=mode,
+            alias="PC - Recorded input",
+            virtual_desktop=virtual_desktop,
+            start_ignore_ms=0,
+        )
+
+        try:
+            recorder.start()
+        except RecorderError as err:
+            status_var.set(f"Recorder error: {err}")
+            return
+        except Exception as err:
+            status_var.set(f"Could not start recorder: {err}")
+            return
+
+        update_ignore_rect()
+        status_var.set("Recording. Perform the actions on Windows now.")
+
+    def countdown(remaining: int) -> None:
+        if recording_finished:
+            return
+
+        if remaining <= 0:
+            start_recording_now()
+            return
+
+        status_var.set(f"Starting in {remaining}...")
+        root.after(1000, lambda: countdown(remaining - 1))
+
+    def stop_and_copy() -> None:
+        nonlocal recording_finished, latest_yaml, latest_path
+
+        if not recorder or recording_finished:
+            return
+
+        try:
+            latest_yaml, latest_path = recorder.stop_and_save()
+        except Exception as err:
+            status_var.set(f"Could not stop recorder: {err}")
+            return
+
+        recording_finished = True
+        status_var.set("Recording stopped.")
+        last_file_var.set(f"Saved: {latest_path}")
+        set_preview(latest_yaml)
+
+        if set_clipboard_text(latest_yaml, root):
+            clipboard_var.set("YAML copied to clipboard.")
+        else:
+            clipboard_var.set("Could not copy YAML to clipboard.")
+
+    def stop_and_open() -> None:
+        stop_and_copy()
+
+        if latest_path and latest_path.exists():
+            os.startfile(latest_path)
+
+    def copy_yaml_again() -> None:
+        if not latest_yaml:
+            clipboard_var.set("No YAML available yet.")
+            return
+
+        if set_clipboard_text(latest_yaml, root):
+            clipboard_var.set("YAML copied to clipboard.")
+        else:
+            clipboard_var.set("Could not copy YAML.")
+
+    def cancel_recording() -> None:
+        nonlocal recording_finished
+
+        if recorder and recorder.is_recording:
+            recorder.stop_without_saving()
+
+        recording_finished = True
+        root.destroy()
+
+    def open_recordings() -> None:
+        open_recordings_folder()
+
+    def close_window() -> None:
+        if recorder and recorder.is_recording:
+            recorder.stop_without_saving()
+
+        root.destroy()
+
+    buttons = ttk.Frame(main)
+    buttons.grid(row=7, column=0, columnspan=4, sticky="ew", pady=(12, 0))
+
+    ttk.Button(buttons, text="Stop & Copy YAML", command=stop_and_copy).grid(row=0, column=0, padx=(0, 8))
+    ttk.Button(buttons, text="Stop & Open YAML", command=stop_and_open).grid(row=0, column=1, padx=(0, 8))
+    ttk.Button(buttons, text="Copy YAML again", command=copy_yaml_again).grid(row=0, column=2, padx=(0, 8))
+    ttk.Button(buttons, text="Cancel", command=cancel_recording).grid(row=0, column=3)
+
+    buttons2 = ttk.Frame(main)
+    buttons2.grid(row=8, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+
+    ttk.Button(buttons2, text="Open recordings folder", command=open_recordings).grid(row=0, column=0, padx=(0, 8))
+    ttk.Button(buttons2, text="Close", command=close_window).grid(row=0, column=1)
+
+    root.protocol("WM_DELETE_WINDOW", close_window)
+
+    update_status()
+    countdown(RECORDER_COUNTDOWN_SECONDS)
+
     root.mainloop()
 
 
@@ -1465,9 +1803,16 @@ def open_settings_window() -> None:
     buttons3 = ttk.Frame(main)
     buttons3.grid(row=3, column=0, sticky="ew", pady=(8, 0))
 
-    ttk.Button(buttons3, text="Open Logs", command=open_logs_folder).grid(row=0, column=0, padx=(0, 8))
-    ttk.Button(buttons3, text="Open Install Folder", command=open_install_folder).grid(row=0, column=1, padx=(0, 8))
-    ttk.Button(buttons3, text="Close", command=root.destroy).grid(row=0, column=2)
+    ttk.Button(buttons3, text="Start Recorder: Mouse", command=lambda: launch_recorder_window("mouse")).grid(row=0, column=0, padx=(0, 8))
+    ttk.Button(buttons3, text="Start Recorder: Mouse + Keyboard", command=lambda: launch_recorder_window("mouse_keyboard")).grid(row=0, column=1, padx=(0, 8))
+    ttk.Button(buttons3, text="Open Recordings", command=open_recordings_folder).grid(row=0, column=2)
+
+    buttons4 = ttk.Frame(main)
+    buttons4.grid(row=4, column=0, sticky="ew", pady=(8, 0))
+
+    ttk.Button(buttons4, text="Open Logs", command=open_logs_folder).grid(row=0, column=0, padx=(0, 8))
+    ttk.Button(buttons4, text="Open Install Folder", command=open_install_folder).grid(row=0, column=1, padx=(0, 8))
+    ttk.Button(buttons4, text="Close", command=root.destroy).grid(row=0, column=2)
 
     root.mainloop()
 
@@ -1510,6 +1855,18 @@ def on_show_coordinates(icon: pystray.Icon, item: pystray.MenuItem) -> None:
     launch_coordinates_window()
 
 
+def on_start_recording_mouse(icon: pystray.Icon, item: pystray.MenuItem) -> None:
+    launch_recorder_window("mouse")
+
+
+def on_start_recording_mouse_keyboard(icon: pystray.Icon, item: pystray.MenuItem) -> None:
+    launch_recorder_window("mouse_keyboard")
+
+
+def on_open_recordings(icon: pystray.Icon, item: pystray.MenuItem) -> None:
+    open_recordings_folder()
+
+
 def on_copy_setup_info(icon: pystray.Icon, item: pystray.MenuItem) -> None:
     threading.Thread(target=copy_setup_info_from_tray, args=(icon,), daemon=True).start()
 
@@ -1550,6 +1907,11 @@ def build_menu() -> pystray.Menu:
         pystray.MenuItem("Settings...", on_settings),
         pystray.MenuItem("Show mouse coordinates", on_show_coordinates),
         pystray.MenuItem("Copy mouse coordinates", on_copy_mouse_coordinates),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("Start recording: mouse only", on_start_recording_mouse),
+        pystray.MenuItem("Start recording: mouse + keyboard", on_start_recording_mouse_keyboard),
+        pystray.MenuItem("Open recordings folder", on_open_recordings),
+        pystray.Menu.SEPARATOR,
         pystray.MenuItem("Copy setup info", on_copy_setup_info),
         pystray.MenuItem("Release stuck mouse buttons", on_release_buttons),
         pystray.Menu.SEPARATOR,
@@ -1582,6 +1944,20 @@ def main() -> None:
 
         update_coordinate_cache()
         open_coordinates_window()
+        return
+
+    if "--recorder" in sys.argv:
+        if not acquire_recorder_instance_lock():
+            return
+
+        mode: RecordingMode = "mouse"
+
+        if "mouse_keyboard" in sys.argv:
+            mode = "mouse_keyboard"
+
+        update_status_cache()
+        update_coordinate_cache()
+        open_recorder_window(mode)
         return
 
     if not acquire_single_instance_lock():
