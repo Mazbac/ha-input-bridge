@@ -1,62 +1,82 @@
 arm:
+  name: Arm bridge
+  description: Temporarily arm the bridge so input commands are accepted.
   fields:
     seconds:
+      name: Seconds
+      description: How long the bridge should stay armed.
       required: false
       default: 30
-      example: 30
       selector:
         number:
           min: 1
           max: 120
+          step: 1
           mode: slider
 
 position:
-  fields: {}
+  name: Get mouse position
+  description: Return the current mouse position and virtual desktop bounds.
 
 move:
+  name: Move mouse
+  description: Move the mouse to absolute virtual desktop coordinates.
   fields:
     x:
+      name: X coordinate
+      description: Horizontal virtual desktop coordinate. Can be negative on extended displays.
       required: true
-      example: 500
       selector:
         number:
-          min: 0
-          max: 10000
+          min: -100000
+          max: 100000
+          step: 1
           mode: box
     y:
+      name: Y coordinate
+      description: Vertical virtual desktop coordinate. Can be negative on some display layouts.
       required: true
-      example: 300
       selector:
         number:
-          min: 0
-          max: 10000
+          min: -100000
+          max: 100000
+          step: 1
           mode: box
 
 move_relative:
+  name: Move mouse relative
+  description: Move the mouse relative to its current position.
   fields:
     dx:
+      name: Delta X
+      description: Horizontal movement in pixels.
       required: true
-      example: 20
       selector:
         number:
-          min: -300
-          max: 300
+          min: -1000
+          max: 1000
+          step: 1
           mode: box
     dy:
+      name: Delta Y
+      description: Vertical movement in pixels.
       required: true
-      example: -10
       selector:
         number:
-          min: -300
-          max: 300
+          min: -1000
+          max: 1000
+          step: 1
           mode: box
 
 click:
+  name: Click mouse
+  description: Click at the current mouse position.
   fields:
     button:
+      name: Button
+      description: Mouse button to click.
       required: false
       default: left
-      example: left
       selector:
         select:
           options:
@@ -64,38 +84,83 @@ click:
             - right
             - middle
     clicks:
+      name: Clicks
+      description: Number of clicks.
       required: false
       default: 1
-      example: 1
       selector:
         number:
           min: 1
           max: 3
+          step: 1
           mode: slider
 
+mouse_down:
+  name: Mouse button down
+  description: Press and hold a mouse button.
+  fields:
+    button:
+      name: Button
+      description: Mouse button to press and hold.
+      required: false
+      default: left
+      selector:
+        select:
+          options:
+            - left
+            - right
+            - middle
+
+mouse_up:
+  name: Mouse button up
+  description: Release a mouse button.
+  fields:
+    button:
+      name: Button
+      description: Mouse button to release.
+      required: false
+      default: left
+      selector:
+        select:
+          options:
+            - left
+            - right
+            - middle
+
+release_all:
+  name: Release all mouse buttons
+  description: Release left, right, and middle mouse buttons. Use this if a drag gets stuck.
+
 scroll:
+  name: Scroll mouse wheel
+  description: Scroll at the current mouse position.
   fields:
     amount:
+      name: Amount
+      description: Positive values scroll up; negative values scroll down.
       required: true
-      example: -10
       selector:
         number:
-          min: -80
-          max: 80
+          min: -120
+          max: 120
+          step: 1
           mode: box
 
 write:
+  name: Write text
+  description: Type text into the active window.
   fields:
     text:
+      name: Text
+      description: Text to type.
       required: true
-      example: Hello from Home Assistant
       selector:
         text:
-          multiline: false
     interval:
+      name: Interval
+      description: Delay between keystrokes in seconds.
       required: false
       default: 0
-      example: 0
       selector:
         number:
           min: 0
@@ -104,33 +169,23 @@ write:
           mode: box
 
 press:
+  name: Press key
+  description: Press a keyboard key.
   fields:
     key:
+      name: Key
+      description: Keyboard key to press.
       required: true
-      example: enter
       selector:
-        select:
-          custom_value: true
-          options:
-            - enter
-            - esc
-            - tab
-            - space
-            - left
-            - right
-            - up
-            - down
-            - backspace
-            - delete
-            - home
-            - end
+        text:
 
 hotkey:
+  name: Press hotkey
+  description: Press a keyboard shortcut.
   fields:
     keys:
+      name: Keys
+      description: List of keys to press together, such as ctrl and l.
       required: true
-      example:
-        - ctrl
-        - l
       selector:
         object:
