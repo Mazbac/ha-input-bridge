@@ -38,7 +38,6 @@ MAX_SCROLL_AMOUNT = 120
 
 DEFAULT_ALIAS = "PC - Recorded input"
 
-
 MODIFIER_ORDER = ["ctrl", "alt", "shift", "win"]
 
 SPECIAL_KEY_MAP = {
@@ -145,6 +144,8 @@ class HAInputBridgeRecorder:
 
         self._last_recording_file: Path | None = None
 
+        self._ignore_rects: list[tuple[int, int, int, int]] = []
+
     @property
     def is_recording(self) -> bool:
         with self._lock:
@@ -155,8 +156,39 @@ class HAInputBridgeRecorder:
         with self._lock:
             return self._last_recording_file
 
+    def set_ignore_rects(self, rects: list[tuple[int, int, int, int]]) -> None:
+        """Set screen rectangles that should be ignored by mouse recording.
+
+        Rect tuple format:
+        (left, top, right, bottom)
+        """
+
+        normalized: list[tuple[int, int, int, int]] = []
+
+        for rect in rects:
+            try:
+                left, top, right, bottom = rect
+                left = int(left)
+                top = int(top)
+                right = int(right)
+                bottom = int(bottom)
+            except (TypeError, ValueError):
+                continue
+
+            if right < left:
+                left, right = right, left
+
+            if bottom < top:
+                top, bottom = bottom, top
+
+            normalized.append((left, top, right, bottom))
+
+        with self._lock:
+            self._ignore_rects = normalized
+
     def start(self) -> None:
         """Start listeners."""
+
         with self._lock:
             if self._recording:
                 raise RecorderError("Recorder is already running")
@@ -183,6 +215,7 @@ class HAInputBridgeRecorder:
 
     def stop_and_save(self) -> tuple[str, Path]:
         """Stop listeners, generate YAML, save it, and return content plus path."""
+
         with self._lock:
             if not self._recording:
                 raise RecorderError("Recorder is not running")
@@ -196,7 +229,11 @@ class HAInputBridgeRecorder:
             self._flush_text_locked(self._stopped_at_ms)
             self._finalize_open_mouse_buttons_locked(self._stopped_at_ms)
 
-            if not self._actions and self._last_mouse_x is not None and self._last_mouse_y is not None:
+            if (
+                not self._actions
+                and self._last_mouse_x is not None
+                and self._last_mouse_y is not None
+            ):
                 self._emit_move_locked(
                     self._stopped_at_ms,
                     self._last_mouse_x,
@@ -212,6 +249,7 @@ class HAInputBridgeRecorder:
 
     def stop_without_saving(self) -> None:
         """Stop listeners and discard current recording."""
+
         with self._lock:
             if not self._recording:
                 return
@@ -223,6 +261,7 @@ class HAInputBridgeRecorder:
 
     def get_status(self) -> dict[str, Any]:
         """Return recorder status for UI."""
+
         with self._lock:
             now = self._now_ms()
             duration_ms = max(0, now - self._started_at_ms) if self._started_at_ms else 0
@@ -268,9 +307,6 @@ class HAInputBridgeRecorder:
         self._keyboard_listener = None
 
     def _stop_listeners(self) -> None:
-        mouse_listener = None
-        keyboard_listener = None
-
         with self._lock:
             mouse_listener = self._mouse_listener
             keyboard_listener = self._keyboard_listener
@@ -292,12 +328,22 @@ class HAInputBridgeRecorder:
     def _now_ms(self) -> int:
         return int(time.monotonic() * 1000)
 
+    def _inside_ignore_rect_locked(self, x: int, y: int) -> bool:
+        for left, top, right, bottom in self._ignore_rects:
+            if left <= x <= right and top <= y <= bottom:
+                return True
+
+        return False
+
     def _should_ignore_locked(self, event_time_ms: int) -> bool:
         return (
             not self._recording
             or self._cancelled
             or event_time_ms < self._ignore_until_ms
         )
+
+    def _should_ignore_mouse_locked(self, event_time_ms: int, x: int, y: int) -> bool:
+        return self._should_ignore_locked(event_time_ms) or self._inside_ignore_rect_locked(x, y)
 
     def _round_delay_ms(self, delay_ms: int) -> int:
         delay_ms = max(0, min(int(delay_ms), MAX_DELAY_MS))
@@ -426,11 +472,11 @@ class HAInputBridgeRecorder:
         event_time_ms = self._now_ms()
 
         with self._lock:
-            if self._should_ignore_locked(event_time_ms):
-                return
-
             x = int(x)
             y = int(y)
+
+            if self._should_ignore_mouse_locked(event_time_ms, x, y):
+                return
 
             self._last_mouse_x = x
             self._last_mouse_y = y
@@ -446,11 +492,11 @@ class HAInputBridgeRecorder:
             return
 
         with self._lock:
-            if self._should_ignore_locked(event_time_ms):
-                return
-
             x = int(x)
             y = int(y)
+
+            if self._should_ignore_mouse_locked(event_time_ms, x, y):
+                return
 
             self._last_mouse_x = x
             self._last_mouse_y = y
@@ -570,11 +616,11 @@ class HAInputBridgeRecorder:
         event_time_ms = self._now_ms()
 
         with self._lock:
-            if self._should_ignore_locked(event_time_ms):
-                return
-
             x = int(x)
             y = int(y)
+
+            if self._should_ignore_mouse_locked(event_time_ms, x, y):
+                return
 
             self._last_mouse_x = x
             self._last_mouse_y = y
@@ -778,7 +824,11 @@ class HAInputBridgeRecorder:
         return max(30, min(120, duration_seconds + 10))
 
     def _build_yaml_locked(self) -> str:
-        actions = [action for action in self._actions if not str(action.get("type", "")).startswith("_")]
+        actions = [
+            action
+            for action in self._actions
+            if not str(action.get("type", "")).startswith("_")
+        ]
         arm_seconds = self._arm_seconds_locked()
 
         lines: list[str] = []
