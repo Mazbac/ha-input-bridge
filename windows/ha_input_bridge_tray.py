@@ -12,6 +12,8 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
@@ -475,6 +477,45 @@ Set-Clipboard -Value $Text
     return False
 
 
+def call_local_bridge(payload: dict[str, Any], timeout_seconds: float = 3.0) -> bool:
+    config = load_config()
+    token = str(config.get("token", "")).strip()
+
+    try:
+        port = int(config.get("port", DEFAULT_PORT))
+    except (TypeError, ValueError):
+        port = DEFAULT_PORT
+
+    if not token:
+        return False
+
+    body = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        url=f"http://127.0.0.1:{port}/input",
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-HA-Token": token,
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            return 200 <= int(response.status) < 300
+    except (OSError, urllib.error.URLError, urllib.error.HTTPError, TimeoutError):
+        return False
+
+
+def release_stuck_mouse_buttons() -> bool:
+    return call_local_bridge(
+        {
+            "type": "mouse",
+            "action": "release_all",
+        }
+    )
+
+
 def run_powershell_file_elevated(script: str) -> None:
     script_path = Path(tempfile.gettempdir()) / "ha-input-bridge-apply-settings.ps1"
     script_path.write_text(script, encoding="utf-8")
@@ -865,6 +906,11 @@ def copy_setup_info_from_tray(icon: pystray.Icon) -> None:
         notify(icon, "Could not copy connection info.")
 
 
+def release_buttons_from_tray(icon: pystray.Icon) -> None:
+    ok = release_stuck_mouse_buttons()
+    notify(icon, "Mouse buttons released." if ok else "Could not release mouse buttons.")
+
+
 def open_settings_window() -> None:
     if tk is None or ttk is None or messagebox is None:
         return
@@ -1029,6 +1075,14 @@ def open_settings_window() -> None:
 
         open_connection_info()
 
+    def release_mouse_buttons() -> None:
+        ok = release_stuck_mouse_buttons()
+
+        if ok:
+            messagebox.showinfo(APP_NAME, "Mouse buttons released.")
+        else:
+            messagebox.showerror(APP_NAME, "Could not release mouse buttons. Check that the bridge is running.")
+
     buttons = ttk.Frame(main)
     buttons.grid(row=1, column=0, sticky="ew", pady=(12, 0))
 
@@ -1040,9 +1094,10 @@ def open_settings_window() -> None:
     buttons2 = ttk.Frame(main)
     buttons2.grid(row=2, column=0, sticky="ew", pady=(8, 0))
 
-    ttk.Button(buttons2, text="Open Logs", command=open_logs_folder).grid(row=0, column=0, padx=(0, 8))
-    ttk.Button(buttons2, text="Open Install Folder", command=open_install_folder).grid(row=0, column=1, padx=(0, 8))
-    ttk.Button(buttons2, text="Close", command=root.destroy).grid(row=0, column=2)
+    ttk.Button(buttons2, text="Release Mouse Buttons", command=release_mouse_buttons).grid(row=0, column=0, padx=(0, 8))
+    ttk.Button(buttons2, text="Open Logs", command=open_logs_folder).grid(row=0, column=1, padx=(0, 8))
+    ttk.Button(buttons2, text="Open Install Folder", command=open_install_folder).grid(row=0, column=2, padx=(0, 8))
+    ttk.Button(buttons2, text="Close", command=root.destroy).grid(row=0, column=3)
 
     root.mainloop()
 
@@ -1085,6 +1140,10 @@ def on_copy_setup_info(icon: pystray.Icon, item: pystray.MenuItem) -> None:
     threading.Thread(target=copy_setup_info_from_tray, args=(icon,), daemon=True).start()
 
 
+def on_release_buttons(icon: pystray.Icon, item: pystray.MenuItem) -> None:
+    threading.Thread(target=release_buttons_from_tray, args=(icon,), daemon=True).start()
+
+
 def on_open_connection_info(icon: pystray.Icon, item: pystray.MenuItem) -> None:
     open_connection_info()
 
@@ -1111,6 +1170,7 @@ def build_menu() -> pystray.Menu:
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Settings...", on_settings),
         pystray.MenuItem("Copy setup info", on_copy_setup_info),
+        pystray.MenuItem("Release stuck mouse buttons", on_release_buttons),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Start bridge", on_start),
         pystray.MenuItem("Stop bridge", on_stop),
