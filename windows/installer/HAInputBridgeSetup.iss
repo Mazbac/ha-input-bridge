@@ -1,5 +1,5 @@
 #define MyAppName "HA Input Bridge"
-#define MyAppVersion "0.5.0"
+#define MyAppVersion "0.7.0"
 #define MyAppPublisher "Mazbac"
 #define MyAgentExeName "ha-input-bridge-agent.exe"
 #define MyTrayExeName "ha-input-bridge-tray.exe"
@@ -63,8 +63,8 @@ var
   AppDir: String;
 begin
   AppDir := ExpandConstant('{app}');
-
   S := '';
+
   S := S + '$ErrorActionPreference = "Stop"' + CRLF();
   S := S + CRLF();
 
@@ -85,6 +85,34 @@ begin
   S := S + '$DefaultFirewallRemoteAddress = "LocalSubnet"' + CRLF();
   S := S + '$DefaultPort = 8765' + CRLF();
   S := S + '$CurrentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name' + CRLF();
+  S := S + CRLF();
+
+  S := S + 'function Get-HostScore {' + CRLF();
+  S := S + '  param([string]$IpAddress)' + CRLF();
+  S := S + '  $Parts = $IpAddress.Split(".")' + CRLF();
+  S := S + '  if ($Parts.Count -lt 2) { return 50 }' + CRLF();
+  S := S + '  $First = 0' + CRLF();
+  S := S + '  $Second = 0' + CRLF();
+  S := S + '  if (-not [int]::TryParse($Parts[0], [ref]$First)) { return 50 }' + CRLF();
+  S := S + '  if (-not [int]::TryParse($Parts[1], [ref]$Second)) { return 50 }' + CRLF();
+  S := S + '  if ($First -eq 192 -and $Second -eq 168) { return 10 }' + CRLF();
+  S := S + '  if ($First -eq 10) { return 20 }' + CRLF();
+  S := S + '  if ($First -eq 172 -and $Second -ge 16 -and $Second -le 31) { return 30 }' + CRLF();
+  S := S + '  if ($First -eq 100 -and $Second -ge 64 -and $Second -le 127) { return 40 }' + CRLF();
+  S := S + '  return 50' + CRLF();
+  S := S + '}' + CRLF();
+  S := S + CRLF();
+
+  S := S + 'function Get-HostCandidates {' + CRLF();
+  S := S + '  @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |' + CRLF();
+  S := S + '    Where-Object {' + CRLF();
+  S := S + '      $_.IPAddress -notlike "127.*" -and' + CRLF();
+  S := S + '      $_.IPAddress -notlike "169.254.*" -and' + CRLF();
+  S := S + '      $_.IPAddress -ne "0.0.0.0"' + CRLF();
+  S := S + '    } |' + CRLF();
+  S := S + '    Select-Object -ExpandProperty IPAddress -Unique |' + CRLF();
+  S := S + '    Sort-Object @{ Expression = { Get-HostScore $_ } }, @{ Expression = { $_ } })' + CRLF();
+  S := S + '}' + CRLF();
   S := S + CRLF();
 
   S := S + 'New-Item -ItemType Directory -Path $DataDir -Force | Out-Null' + CRLF();
@@ -137,15 +165,8 @@ begin
   S := S + '}' + CRLF();
   S := S + CRLF();
 
-  S := S + '$HostCandidates = @(' + CRLF();
-  S := S + '  Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |' + CRLF();
-  S := S + '    Where-Object {' + CRLF();
-  S := S + '      $_.IPAddress -notlike "127.*" -and' + CRLF();
-  S := S + '      $_.IPAddress -notlike "169.254.*" -and' + CRLF();
-  S := S + '      $_.IPAddress -ne "0.0.0.0"' + CRLF();
-  S := S + '    } |' + CRLF();
-  S := S + '    Select-Object -ExpandProperty IPAddress -Unique' + CRLF();
-  S := S + ')' + CRLF();
+  S := S + '$HostCandidates = @(Get-HostCandidates)' + CRLF();
+  S := S + '$RecommendedHost = if ($HostCandidates.Count -gt 0) { $HostCandidates[0] } else { "Use the Windows PC IP address" }' + CRLF();
   S := S + '$HostCandidateText = if ($HostCandidates.Count -gt 0) { $HostCandidates -join ", " } else { "Use the Windows PC IP address" }' + CRLF();
   S := S + CRLF();
 
@@ -185,6 +206,16 @@ begin
   S := S + 'Get-NetFirewallRule -DisplayName $FirewallRuleName -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue' + CRLF();
   S := S + CRLF();
 
+  S := S + 'Get-CimInstance Win32_Process |' + CRLF();
+  S := S + '  Where-Object {' + CRLF();
+  S := S + '    $_.CommandLine -like "*ha-input-bridge-agent.exe*" -or' + CRLF();
+  S := S + '    $_.CommandLine -like "*ha-input-bridge-tray.exe*"' + CRLF();
+  S := S + '  } |' + CRLF();
+  S := S + '  ForEach-Object {' + CRLF();
+  S := S + '    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue' + CRLF();
+  S := S + '  }' + CRLF();
+  S := S + CRLF();
+
   S := S + 'New-NetFirewallRule -DisplayName $FirewallRuleName -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow -RemoteAddress $FirewallRemoteAddress | Out-Null' + CRLF();
   S := S + CRLF();
 
@@ -209,12 +240,14 @@ begin
   S := S + '$Info = @"' + CRLF();
   S := S + 'HA Input Bridge connection details' + CRLF();
   S := S + '' + CRLF();
-  S := S + 'Home Assistant should discover this bridge automatically in a future release.' + CRLF();
-  S := S + 'For manual setup, use one of the Windows host addresses below.' + CRLF();
+  S := S + 'Use these values in Home Assistant:' + CRLF();
   S := S + '' + CRLF();
-  S := S + 'Possible Host values: $HostCandidateText' + CRLF();
+  S := S + 'Host: $RecommendedHost' + CRLF();
   S := S + 'Port: $Port' + CRLF();
   S := S + 'Token: $Token' + CRLF();
+  S := S + '' + CRLF();
+  S := S + 'Possible Host values:' + CRLF();
+  S := S + '$HostCandidateText' + CRLF();
   S := S + '' + CRLF();
   S := S + 'Bridge bind address:' + CRLF();
   S := S + '$BindHost' + CRLF();
@@ -231,7 +264,7 @@ begin
   S := S + 'Logs:' + CRLF();
   S := S + '$DataDir' + CRLF();
   S := S + '' + CRLF();
-  S := S + 'Home Assistant manual setup:' + CRLF();
+  S := S + 'Home Assistant setup:' + CRLF();
   S := S + 'Settings -> Devices & services -> Add integration -> HA Input Bridge' + CRLF();
   S := S + '' + CRLF();
   S := S + 'Keep this token private.' + CRLF();
