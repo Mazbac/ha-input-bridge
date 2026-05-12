@@ -25,6 +25,7 @@ It receives secure input commands from Home Assistant and turns them into:
 
 - mouse movement
 - left/right/middle click
+- click-and-drag
 - scrolling
 - typing text
 - keyboard shortcuts
@@ -37,6 +38,7 @@ The Windows app also adds a tray icon so you can:
 - start or stop the bridge
 - restart the bridge
 - copy setup info
+- release stuck mouse buttons
 - open settings
 - open logs
 - uninstall the app
@@ -60,6 +62,8 @@ It uses:
 - a temporary arm window before input commands are accepted
 - bounded request sizes
 - bounded mouse, scroll, and text input values
+- explicit mouse button release actions
+- a release-all safety action for stuck mouse buttons
 
 The token is required for Home Assistant to connect.
 
@@ -148,6 +152,7 @@ You should see menu items like:
 Status: running
 Settings...
 Copy setup info
+Release stuck mouse buttons
 Start bridge
 Stop bridge
 Restart bridge
@@ -310,8 +315,11 @@ The Windows mouse cursor should move.
 Test:
 
 - movement
-- click
-- scroll
+- tap click
+- long-press drag
+- two-finger scroll
+- two-finger right click
+- three-finger middle click
 - keyboard input if available
 
 If you use multiple monitors, test that the cursor can move across all extended displays.
@@ -342,6 +350,7 @@ Right-click the tray icon to access:
 ```text
 Settings...
 Copy setup info
+Release stuck mouse buttons
 Start bridge
 Stop bridge
 Restart bridge
@@ -481,6 +490,35 @@ Most users should not need to choose manually. Use **Copy setup info**.
 
 ---
 
+# Trackpad gestures
+
+The Home Assistant trackpad supports:
+
+| Gesture | Action |
+| --- | --- |
+| One-finger move | Move cursor |
+| One-finger tap | Left click |
+| One-finger hold, then drag | Hold left mouse button and drag |
+| Two-finger move | Scroll |
+| Two-finger tap | Right click |
+| Three-finger tap | Middle click |
+
+Long-press drag starts after holding one finger still for about 450 ms.
+
+If the finger moves too much before the long-press timer finishes, drag mode is cancelled and normal cursor movement continues.
+
+During drag mode, the left mouse button is held down until you release your finger.
+
+Use long-press drag for:
+
+- moving windows
+- selecting text
+- dragging files
+- moving sliders
+- drawing selection boxes
+
+---
+
 # Multi-monitor support
 
 HA Input Bridge supports Windows extended desktop layouts.
@@ -522,6 +560,7 @@ The Settings panel inside the Home Assistant trackpad card includes:
 - max mouse step
 - max scroll step
 - frame interval
+- long-press drag
 - haptic feedback
 - live typing
 - auto-open keyboard behavior
@@ -674,7 +713,7 @@ Use the local network host unless Home Assistant connects over Tailscale.
 
 ## Cursor only moves on one monitor
 
-Update to v0.5.0 or newer.
+Update to v0.7.0 or newer.
 
 HA Input Bridge uses Windows virtual desktop bounds, so extended displays should work, including monitors positioned to the left of the primary display.
 
@@ -701,6 +740,45 @@ For two 2560x1440 monitors side by side, a valid response may look like:
 ```
 
 If `width` only shows one monitor, Windows is not exposing the extended desktop correctly to the bridge process.
+
+---
+
+## Drag does not start
+
+Long-press drag only starts if one finger stays mostly still for about 450 ms.
+
+If you move immediately, HA Input Bridge treats it as normal cursor movement.
+
+Check the trackpad settings and make sure:
+
+```text
+Long-press drag: enabled
+```
+
+Drag mode is cancelled if the finger moves too much before the long-press delay finishes.
+
+---
+
+## Mouse button seems stuck
+
+Use either recovery option.
+
+From Home Assistant:
+
+```text
+Home Assistant trackpad
+→ Quick keys
+→ Release mouse
+```
+
+Or from Windows:
+
+```text
+Windows tray icon
+→ Release stuck mouse buttons
+```
+
+This releases left, right, and middle mouse buttons.
 
 ---
 
@@ -805,6 +883,9 @@ HA Input Bridge includes several hardening measures:
 - bounded mouse movement values
 - bounded scroll values
 - bounded text input length
+- explicit mouse down/up actions
+- release-all mouse safety action
+- tray panic action for stuck mouse buttons
 - rotating log files
 - frontend runtime cleanup
 - Home Assistant config-entry runtime cleanup
@@ -859,13 +940,17 @@ Before publishing a release:
 5. Copy setup info works
 6. Home Assistant setup accepts pasted setup info
 7. Trackpad works
-8. Multi-monitor cursor movement works
-9. Windows logs rotate
-10. Home Assistant logs show no HA Input Bridge errors
-11. README is updated
-12. SECURITY.md is updated
-13. Tag is created
-14. GitHub Release includes the Windows installer
+8. Long-press drag works
+9. Release mouse safety action works
+10. Multi-monitor cursor movement works
+11. Windows logs rotate
+12. Home Assistant logs show no HA Input Bridge errors
+13. README is updated
+14. SECURITY.md is updated
+15. manifest.json version matches release tag
+16. Windows installer version matches release tag
+17. Tag is created
+18. GitHub Release includes the Windows installer
 ```
 
 ---
