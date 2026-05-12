@@ -36,6 +36,8 @@ SM_YVIRTUALSCREEN = 77
 SM_CXVIRTUALSCREEN = 78
 SM_CYVIRTUALSCREEN = 79
 
+MOUSE_BUTTONS = {"left", "right", "middle"}
+
 ALLOWED_KEYS = {
     "ctrl",
     "shift",
@@ -280,15 +282,22 @@ def safe_move_relative(dx: int | float, dy: int | float) -> tuple[int, int]:
     return safe_move_to(target_x, target_y)
 
 
+def validate_mouse_button(button: str) -> str:
+    button = str(button).lower().strip()
+
+    if button not in MOUSE_BUTTONS:
+        abort(400, "Invalid mouse button")
+
+    return button
+
+
 def safe_click(
     button: str = "left",
     clicks: int = 1,
     x: int | None = None,
     y: int | None = None,
 ) -> None:
-    if button not in ("left", "right", "middle"):
-        abort(400, "Invalid mouse button")
-
+    button = validate_mouse_button(button)
     safe_clicks = int(clamp(int(clicks), 1, 3))
 
     if x is not None and y is not None:
@@ -299,6 +308,48 @@ def safe_click(
     safe_x, safe_y = safe_position()
     pyautogui.moveTo(safe_x, safe_y, duration=0)
     pyautogui.click(button=button, clicks=safe_clicks)
+
+
+def safe_mouse_down(
+    button: str = "left",
+    x: int | None = None,
+    y: int | None = None,
+) -> None:
+    button = validate_mouse_button(button)
+
+    if x is not None and y is not None:
+        safe_x, safe_y = safe_move_to(x, y)
+        pyautogui.mouseDown(x=safe_x, y=safe_y, button=button)
+        return
+
+    safe_x, safe_y = safe_position()
+    pyautogui.moveTo(safe_x, safe_y, duration=0)
+    pyautogui.mouseDown(button=button)
+
+
+def safe_mouse_up(
+    button: str = "left",
+    x: int | None = None,
+    y: int | None = None,
+) -> None:
+    button = validate_mouse_button(button)
+
+    if x is not None and y is not None:
+        safe_x, safe_y = safe_move_to(x, y)
+        pyautogui.mouseUp(x=safe_x, y=safe_y, button=button)
+        return
+
+    safe_x, safe_y = safe_position()
+    pyautogui.moveTo(safe_x, safe_y, duration=0)
+    pyautogui.mouseUp(button=button)
+
+
+def release_all_mouse_buttons() -> None:
+    for button in ("left", "right", "middle"):
+        try:
+            pyautogui.mouseUp(button=button)
+        except Exception:
+            logging.exception("Failed to release mouse button %s", button)
 
 
 def safe_scroll(
@@ -341,6 +392,13 @@ def request_json() -> dict[str, Any]:
         return {}
 
     return data
+
+
+def action_requires_armed(kind: Any, action: Any) -> bool:
+    if kind == "mouse" and action in ("up", "release_all"):
+        return False
+
+    return True
 
 
 @app.errorhandler(400)
@@ -429,11 +487,13 @@ def arm():
 @app.post("/input")
 def input_command():
     require_security()
-    require_armed()
 
     data = request_json()
     kind = data.get("type")
     action = data.get("action")
+
+    if action_requires_armed(kind, action):
+        require_armed()
 
     if kind == "mouse" and action in ("move", "move_relative", "scroll"):
         logging.debug(
@@ -495,6 +555,38 @@ def handle_mouse_action(action: str | None, data: dict[str, Any]) -> None:
             return
 
         safe_click(button=button, clicks=clicks)
+        return
+
+    if action == "down":
+        button = str(data.get("button", "left"))
+
+        if "x" in data and "y" in data:
+            safe_mouse_down(
+                button=button,
+                x=int(data["x"]),
+                y=int(data["y"]),
+            )
+            return
+
+        safe_mouse_down(button=button)
+        return
+
+    if action == "up":
+        button = str(data.get("button", "left"))
+
+        if "x" in data and "y" in data:
+            safe_mouse_up(
+                button=button,
+                x=int(data["x"]),
+                y=int(data["y"]),
+            )
+            return
+
+        safe_mouse_up(button=button)
+        return
+
+    if action == "release_all":
+        release_all_mouse_buttons()
         return
 
     if action == "scroll":
