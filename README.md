@@ -35,6 +35,9 @@ It supports normal Windows extended display setups, including multiple monitors 
 The Windows app also adds a tray icon so you can:
 
 - see if the bridge is running
+- see live mouse coordinates
+- copy mouse coordinates
+- copy a ready-to-use Home Assistant move action
 - start or stop the bridge
 - restart the bridge
 - copy setup info
@@ -47,7 +50,12 @@ The Windows app also adds a tray icon so you can:
 
 The Home Assistant integration connects to the Windows app.
 
-After setup, Home Assistant can send commands to the Windows PC through the bundled trackpad UI and Home Assistant services.
+After setup, Home Assistant can send commands to the Windows PC through:
+
+- the bundled trackpad UI
+- Home Assistant actions
+- Home Assistant scripts
+- Home Assistant automations
 
 ---
 
@@ -67,7 +75,7 @@ It uses:
 
 The token is required for Home Assistant to connect.
 
-The bridge also requires Home Assistant to arm it before actual input commands are accepted.
+The bridge also requires Home Assistant to arm it before most actual input commands are accepted.
 
 Keep the token private.
 
@@ -150,7 +158,10 @@ You should see menu items like:
 
 ```text
 Status: running
+Mouse: x=500, y=300
 Settings...
+Show mouse coordinates
+Copy mouse coordinates
 Copy setup info
 Release stuck mouse buttons
 Start bridge
@@ -185,6 +196,7 @@ The Basic tab should show:
 
 ```text
 Status: running
+Mouse: x=..., y=...
 Windows bridge host: 192.168.x.x
 Port: 8765
 Listening mode: Automatic - all local network adapters
@@ -349,6 +361,8 @@ Right-click the tray icon to access:
 
 ```text
 Settings...
+Show mouse coordinates
+Copy mouse coordinates
 Copy setup info
 Release stuck mouse buttons
 Start bridge
@@ -361,6 +375,15 @@ Uninstall HA Input Bridge
 Exit tray icon
 ```
 
+The tray context menu also shows:
+
+```text
+Status: running
+Mouse: x=..., y=...
+```
+
+The mouse coordinates are useful when writing Home Assistant scripts and automations.
+
 ---
 
 ## Settings — Basic tab
@@ -370,6 +393,7 @@ The Basic tab is for normal users.
 It shows:
 
 - bridge status
+- current mouse coordinates
 - Windows bridge host
 - alternative host values
 - port
@@ -490,6 +514,55 @@ Most users should not need to choose manually. Use **Copy setup info**.
 
 ---
 
+# Mouse coordinates for scripts
+
+The Windows tray app can show and copy the current mouse coordinates.
+
+Right-click the Windows tray icon and use:
+
+```text
+Show mouse coordinates
+```
+
+This opens a small always-on-top window with:
+
+- current mouse `x`
+- current mouse `y`
+- virtual desktop bounds
+- copy x/y button
+- copy Home Assistant move action button
+- copy details button
+
+You can also right-click the tray icon and use:
+
+```text
+Copy mouse coordinates
+```
+
+This copies:
+
+```yaml
+x: 500
+y: 300
+```
+
+The coordinate window can also copy a ready-to-use Home Assistant action:
+
+```yaml
+- action: ha_input_bridge.arm
+  data:
+    seconds: 10
+
+- action: ha_input_bridge.move
+  data:
+    x: 500
+    y: 300
+```
+
+This is useful when writing Home Assistant scripts and automations.
+
+---
+
 # Trackpad gestures
 
 The Home Assistant trackpad supports:
@@ -503,7 +576,7 @@ The Home Assistant trackpad supports:
 | Two-finger tap | Right click |
 | Three-finger tap | Middle click |
 
-Long-press drag starts after holding one finger still for about 450 ms.
+Long-press drag starts after holding one finger mostly still for a short delay.
 
 If the finger moves too much before the long-press timer finishes, drag mode is cancelled and normal cursor movement continues.
 
@@ -576,6 +649,283 @@ Higher mouse speed = faster cursor movement
 Defaults are chosen to balance smoothness and reliability.
 
 If movement feels too fast or too slow, adjust Mouse speed first.
+
+---
+
+# Home Assistant actions
+
+HA Input Bridge exposes Home Assistant actions that can be used in scripts and automations.
+
+Available actions:
+
+```text
+ha_input_bridge.arm
+ha_input_bridge.position
+ha_input_bridge.move
+ha_input_bridge.move_relative
+ha_input_bridge.click
+ha_input_bridge.mouse_down
+ha_input_bridge.mouse_up
+ha_input_bridge.release_all
+ha_input_bridge.scroll
+ha_input_bridge.write
+ha_input_bridge.press
+ha_input_bridge.hotkey
+```
+
+Most input sequences should start with:
+
+```yaml
+- action: ha_input_bridge.arm
+  data:
+    seconds: 10
+```
+
+---
+
+## Move to coordinates
+
+```yaml
+- action: ha_input_bridge.arm
+  data:
+    seconds: 10
+
+- action: ha_input_bridge.move
+  data:
+    x: 500
+    y: 300
+```
+
+---
+
+## Move relative
+
+```yaml
+- action: ha_input_bridge.arm
+  data:
+    seconds: 10
+
+- action: ha_input_bridge.move_relative
+  data:
+    dx: 200
+    dy: 0
+```
+
+Direction:
+
+```text
+dx positive = right
+dx negative = left
+dy positive = down
+dy negative = up
+```
+
+---
+
+## Click
+
+```yaml
+- action: ha_input_bridge.arm
+  data:
+    seconds: 10
+
+- action: ha_input_bridge.click
+  data:
+    button: left
+    clicks: 1
+```
+
+Buttons:
+
+```text
+left
+right
+middle
+```
+
+Double click:
+
+```yaml
+- action: ha_input_bridge.arm
+  data:
+    seconds: 10
+
+- action: ha_input_bridge.click
+  data:
+    button: left
+    clicks: 2
+```
+
+---
+
+## Drag
+
+```yaml
+- action: ha_input_bridge.arm
+  data:
+    seconds: 10
+
+- action: ha_input_bridge.move
+  data:
+    x: 300
+    y: 300
+
+- delay:
+    milliseconds: 150
+
+- action: ha_input_bridge.mouse_down
+  data:
+    button: left
+
+- delay:
+    milliseconds: 100
+
+- action: ha_input_bridge.move_relative
+  data:
+    dx: 500
+    dy: 300
+
+- delay:
+    milliseconds: 100
+
+- action: ha_input_bridge.mouse_up
+  data:
+    button: left
+
+- action: ha_input_bridge.release_all
+  data: {}
+```
+
+The final `release_all` is a safety step.
+
+---
+
+## Scroll
+
+Scroll up:
+
+```yaml
+- action: ha_input_bridge.arm
+  data:
+    seconds: 10
+
+- action: ha_input_bridge.scroll
+  data:
+    amount: 30
+```
+
+Scroll down:
+
+```yaml
+- action: ha_input_bridge.arm
+  data:
+    seconds: 10
+
+- action: ha_input_bridge.scroll
+  data:
+    amount: -30
+```
+
+---
+
+## Write text
+
+```yaml
+- action: ha_input_bridge.arm
+  data:
+    seconds: 10
+
+- action: ha_input_bridge.write
+  data:
+    text: "hello from Home Assistant"
+    interval: 0
+```
+
+---
+
+## Press a key
+
+```yaml
+- action: ha_input_bridge.arm
+  data:
+    seconds: 10
+
+- action: ha_input_bridge.press
+  data:
+    key: enter
+```
+
+Common keys:
+
+```text
+enter
+esc
+tab
+space
+backspace
+delete
+left
+right
+up
+down
+home
+end
+pageup
+pagedown
+```
+
+---
+
+## Hotkey
+
+Example: `Ctrl+L`
+
+```yaml
+- action: ha_input_bridge.arm
+  data:
+    seconds: 10
+
+- action: ha_input_bridge.hotkey
+  data:
+    keys:
+      - ctrl
+      - l
+```
+
+Example: `Alt+Tab`
+
+```yaml
+- action: ha_input_bridge.arm
+  data:
+    seconds: 10
+
+- action: ha_input_bridge.hotkey
+  data:
+    keys:
+      - alt
+      - tab
+```
+
+---
+
+## Get cursor position
+
+```yaml
+alias: PC - Get cursor position
+sequence:
+  - action: ha_input_bridge.position
+    data: {}
+    response_variable: pc_pos
+
+  - action: persistent_notification.create
+    data:
+      title: "PC cursor"
+      message: >
+        x={{ pc_pos.x }}
+        y={{ pc_pos.y }}
+        desktop={{ pc_pos.left }},{{ pc_pos.top }} → {{ pc_pos.right }},{{ pc_pos.bottom }}
+mode: single
+```
 
 ---
 
@@ -711,9 +1061,32 @@ Use the local network host unless Home Assistant connects over Tailscale.
 
 ---
 
+## Mouse coordinates are unavailable
+
+Check:
+
+```text
+Status: running
+```
+
+Then try:
+
+```text
+Right-click tray icon
+→ Show mouse coordinates
+```
+
+If it still shows unavailable:
+
+1. Restart the bridge from the tray menu.
+2. Open logs from the tray menu.
+3. Check that the Windows bridge is listening on port `8765`.
+
+---
+
 ## Cursor only moves on one monitor
 
-Update to v0.7.0 or newer.
+Update to v0.8.0 or newer.
 
 HA Input Bridge uses Windows virtual desktop bounds, so extended displays should work, including monitors positioned to the left of the primary display.
 
@@ -745,7 +1118,7 @@ If `width` only shows one monitor, Windows is not exposing the extended desktop 
 
 ## Drag does not start
 
-Long-press drag only starts if one finger stays mostly still for about 450 ms.
+Long-press drag only starts if one finger stays mostly still for a short delay.
 
 If you move immediately, HA Input Bridge treats it as normal cursor movement.
 
@@ -891,6 +1264,7 @@ HA Input Bridge includes several hardening measures:
 - Home Assistant config-entry runtime cleanup
 - tray process single-instance handling
 - settings process single-instance handling
+- coordinate viewer single-instance handling
 
 These controls reduce risk and resource growth.
 
@@ -937,20 +1311,24 @@ Before publishing a release:
 2. Fresh Windows install works
 3. Tray process count is correct
 4. Settings process count is correct
-5. Copy setup info works
-6. Home Assistant setup accepts pasted setup info
-7. Trackpad works
-8. Long-press drag works
-9. Release mouse safety action works
-10. Multi-monitor cursor movement works
-11. Windows logs rotate
-12. Home Assistant logs show no HA Input Bridge errors
-13. README is updated
-14. SECURITY.md is updated
-15. manifest.json version matches release tag
-16. Windows installer version matches release tag
-17. Tag is created
-18. GitHub Release includes the Windows installer
+5. Coordinate viewer process count is correct
+6. Copy setup info works
+7. Copy mouse coordinates works
+8. Show mouse coordinates works
+9. Copy HA move action works
+10. Home Assistant setup accepts pasted setup info
+11. Trackpad works
+12. Long-press drag works
+13. Release mouse safety action works
+14. Multi-monitor cursor movement works
+15. Windows logs rotate
+16. Home Assistant logs show no HA Input Bridge errors
+17. README is updated
+18. SECURITY.md is updated
+19. manifest.json version matches release tag
+20. Windows installer version matches release tag
+21. Tag is created
+22. GitHub Release includes the Windows installer
 ```
 
 ---
