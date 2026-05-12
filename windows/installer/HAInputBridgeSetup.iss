@@ -1,5 +1,5 @@
 #define MyAppName "HA Input Bridge"
-#define MyAppVersion "0.8.0"
+#define MyAppVersion "0.9.0"
 #define MyAppPublisher "Mazbac"
 #define MyAgentExeName "ha-input-bridge-agent.exe"
 #define MyTrayExeName "ha-input-bridge-tray.exe"
@@ -70,6 +70,7 @@ begin
 
   S := S + '$InstallDir = ' + PsQuote(AppDir) + CRLF();
   S := S + '$DataDir = Join-Path $env:ProgramData "HA Input Bridge"' + CRLF();
+  S := S + '$RecordingsDir = Join-Path $DataDir "recordings"' + CRLF();
   S := S + '$ConfigPath = Join-Path $DataDir "config.json"' + CRLF();
   S := S + '$AgentExe = Join-Path $InstallDir "ha-input-bridge-agent.exe"' + CRLF();
   S := S + '$TrayExe = Join-Path $InstallDir "ha-input-bridge-tray.exe"' + CRLF();
@@ -116,6 +117,7 @@ begin
   S := S + CRLF();
 
   S := S + 'New-Item -ItemType Directory -Path $DataDir -Force | Out-Null' + CRLF();
+  S := S + 'New-Item -ItemType Directory -Path $RecordingsDir -Force | Out-Null' + CRLF();
   S := S + '& icacls $DataDir /grant "${CurrentUser}:(OI)(CI)M" /T | Out-Null' + CRLF();
   S := S + CRLF();
 
@@ -263,6 +265,9 @@ begin
   S := S + '' + CRLF();
   S := S + 'Logs:' + CRLF();
   S := S + '$DataDir' + CRLF();
+  S := S + '' + CRLF();
+  S := S + 'Recordings:' + CRLF();
+  S := S + '$RecordingsDir' + CRLF();
   S := S + '' + CRLF();
   S := S + 'Home Assistant setup:' + CRLF();
   S := S + 'Settings -> Devices & services -> Add integration -> HA Input Bridge' + CRLF();
