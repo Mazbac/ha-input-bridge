@@ -16,6 +16,7 @@
       }
     },
     "error": {
+      "setup_info_too_long": "The pasted setup info is too long. Copy setup info again from the Windows tray icon.",
       "missing_host": "The pasted setup info does not contain a Host value.",
       "missing_token": "The pasted setup info does not contain a Token value.",
       "invalid_port": "The pasted setup info contains an invalid Port value.",
@@ -40,19 +41,19 @@
     },
     "position": {
       "name": "Get mouse position",
-      "description": "Return the current mouse position and screen size."
+      "description": "Return the current mouse position and virtual desktop bounds."
     },
     "move": {
       "name": "Move mouse",
-      "description": "Move the mouse to absolute screen coordinates.",
+      "description": "Move the mouse to absolute virtual desktop coordinates.",
       "fields": {
         "x": {
           "name": "X coordinate",
-          "description": "Horizontal screen coordinate."
+          "description": "Horizontal virtual desktop coordinate. Can be negative on extended displays."
         },
         "y": {
           "name": "Y coordinate",
-          "description": "Vertical screen coordinate."
+          "description": "Vertical virtual desktop coordinate. Can be negative on some display layouts."
         }
       }
     },
@@ -83,6 +84,30 @@
           "description": "Number of clicks."
         }
       }
+    },
+    "mouse_down": {
+      "name": "Mouse button down",
+      "description": "Press and hold a mouse button.",
+      "fields": {
+        "button": {
+          "name": "Button",
+          "description": "Mouse button to press and hold."
+        }
+      }
+    },
+    "mouse_up": {
+      "name": "Mouse button up",
+      "description": "Release a mouse button.",
+      "fields": {
+        "button": {
+          "name": "Button",
+          "description": "Mouse button to release."
+        }
+      }
+    },
+    "release_all": {
+      "name": "Release all mouse buttons",
+      "description": "Release left, right, and middle mouse buttons. Use this if a drag gets stuck."
     },
     "scroll": {
       "name": "Scroll mouse wheel",
