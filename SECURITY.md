@@ -104,6 +104,104 @@ Mouse release actions are intentionally available as safety actions so that stuc
 
 ---
 
+## Script recorder safety
+
+HA Input Bridge includes a local script recorder.
+
+The recorder can generate Home Assistant script YAML from Windows input actions.
+
+Recorder modes:
+
+- mouse only
+- mouse + keyboard
+
+Mouse-only recording may capture:
+
+- mouse coordinates
+- clicks
+- double clicks
+- right clicks
+- middle clicks
+- scrolling
+- drag actions
+- timing delays
+
+Mouse + keyboard recording may additionally capture:
+
+- typed text
+- hotkeys
+- special keys
+- keyboard timing
+
+Keyboard recording is opt-in.
+
+The app shows a warning before starting mouse + keyboard recording.
+
+Do not use mouse + keyboard recording while typing:
+
+- passwords
+- API tokens
+- recovery codes
+- private messages
+- emails
+- personal information
+- financial information
+- anything you would not want stored in YAML
+
+Generated YAML must be reviewed before use or sharing.
+
+---
+
+## Recorder storage
+
+Recordings are stored locally on the Windows PC:
+
+```text
+C:\ProgramData\HA Input Bridge\recordings
+```
+
+Recorder output does not intentionally include:
+
+- HA Input Bridge token
+- bridge host
+- bridge port
+- Windows credentials
+
+Recorder output may include:
+
+- screen coordinates
+- clicked positions
+- typed text
+- hotkeys
+- delays
+- virtual desktop bounds in comments
+
+Delete recordings that contain sensitive text.
+
+Do not upload recordings to public GitHub issues unless they have been reviewed and redacted.
+
+---
+
+## Generated YAML risk
+
+Generated YAML can replay real mouse and keyboard actions on the Windows PC.
+
+Before running generated YAML in Home Assistant, review it for:
+
+- wrong coordinates
+- unwanted clicks
+- sensitive typed text
+- destructive hotkeys
+- excessive delays
+- accidental drag operations
+- accidental file or window interactions
+
+Coordinates depend on the Windows display layout.
+
+If monitor order, resolution, scaling, or primary display changes, recorded coordinates may no longer match the intended target.
+
+---
+
 ## Stuck mouse button recovery
 
 If a mouse button appears stuck after a drag operation, use either recovery path.
@@ -148,7 +246,7 @@ Include:
 - Home Assistant version
 - clear reproduction steps
 - expected impact
-- whether the token, firewall, network boundary, or arm window is involved
+- whether the token, firewall, network boundary, arm window, or recorder is involved
 
 Do not include real tokens. Use redacted examples.
 
@@ -159,6 +257,14 @@ Token: <REDACTED>
 Host: 192.168.1.50
 Port: 8765
 ```
+
+If the issue involves recorder output, redact:
+
+- passwords
+- tokens
+- private text
+- personal information
+- exact private paths if needed
 
 ---
 
@@ -176,12 +282,18 @@ Security reports may include:
 - stuck mouse button state that cannot be recovered
 - persistent process/resource abuse
 - denial of service caused by malformed requests
+- recorder storing token or host data unexpectedly
+- recorder capturing keyboard input without explicit user action
+- recorder failing to warn before keyboard capture
+- generated YAML containing unintended sensitive bridge configuration
 
 Out of scope:
 
 - issues requiring full local admin access to the Windows PC
 - issues caused by intentionally exposing the bridge to the internet
 - issues caused by sharing the token publicly
+- issues caused by intentionally recording private text
+- issues caused by running generated YAML without review
 - unsupported old versions
 - cosmetic UI issues
 
@@ -207,6 +319,12 @@ HA Input Bridge includes several defensive measures:
 - Home Assistant config-entry runtime cleanup
 - tray process single-instance handling
 - settings process single-instance handling
+- coordinate viewer single-instance handling
+- recorder window single-instance handling
+- recorder warning before keyboard capture
+- recorder local-only YAML storage
+- generated YAML excludes bridge token and host configuration
+- generated YAML ends with `release_all`
 
 These controls reduce risk but do not make the bridge safe to expose publicly.
 
@@ -274,6 +392,30 @@ When sharing logs, review and redact private network details if needed.
 
 ---
 
+## Recordings
+
+The recorder writes YAML files to:
+
+```text
+C:\ProgramData\HA Input Bridge\recordings
+```
+
+Recordings are not automatically uploaded.
+
+Recordings are not automatically sent to Home Assistant.
+
+The user must manually copy or paste the generated YAML into Home Assistant.
+
+Review recordings before:
+
+- running them
+- sharing them
+- committing them to a repository
+- attaching them to an issue
+- sending them to another person
+
+---
+
 ## Public internet warning
 
 HA Input Bridge controls real mouse and keyboard input.
@@ -286,7 +428,7 @@ Never expose the bridge directly to the internet.
 
 ## Release checklist for security-sensitive changes
 
-Before publishing a release that changes input behavior, verify:
+Before publishing a release that changes input, recorder, installer, or network behavior, verify:
 
 ```text
 1. Token authentication still works
@@ -297,9 +439,17 @@ Before publishing a release that changes input behavior, verify:
 6. Release stuck mouse buttons works from tray
 7. Request body size limit still works
 8. Movement limits still apply
-9. Logs do not contain the token
-10. Installer preserves or regenerates config safely
-11. Windows Firewall rule is created correctly
-12. Home Assistant services match services.yaml
-13. README and SECURITY.md match the shipped behavior
+9. Scroll limits still apply
+10. Text length limits still apply
+11. Logs do not contain the token
+12. Installer preserves or regenerates config safely
+13. Windows Firewall rule is created correctly
+14. Home Assistant services match services.yaml
+15. Recorder mouse-only mode works
+16. Recorder mouse + keyboard mode shows a warning
+17. Recorder output does not contain token, host, or port
+18. Recorder output is saved locally only
+19. Recorder output ends with release_all
+20. Recorder does not silently start keyboard capture
+21. README and SECURITY.md match the shipped behavior
 ```
