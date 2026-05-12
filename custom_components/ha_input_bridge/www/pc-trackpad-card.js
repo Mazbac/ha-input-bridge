@@ -8,12 +8,18 @@ class PcTrackpadCard extends HTMLElement {
       sensitivity: 2.8,
       frame_ms: 12,
       max_step: 650,
-      tap_max_ms: 260,
-      tap_threshold_px: 10,
-      long_press_drag_ms: 450,
-      drag_start_threshold_px: 8,
+
+      tap_max_ms: 320,
+      multi_tap_max_ms: 420,
+      tap_threshold_px: 14,
+      multi_tap_threshold_px: 36,
+
+      long_press_drag_ms: 520,
+      drag_start_threshold_px: 28,
+
       scroll_gain: 3.2,
       scroll_max_step: 100,
+
       haptics: true,
       live_type: true,
       long_press_drag: true,
@@ -74,30 +80,43 @@ class PcTrackpadCard extends HTMLElement {
 
   _initializeRuntimeState() {
     this._disposed = false;
+
     this._gesture = null;
-    this._dragging = false;
-    this._dragMode = false;
+    this._pointerGesture = null;
+
+    this._dragActive = false;
+    this._dragWanted = false;
     this._dragButtonDown = false;
+    this._dragMouseDownPending = false;
+
     this._longPressTimer = null;
     this._longPressStartX = null;
     this._longPressStartY = null;
+
+    this._draggingPointer = false;
     this._lastX = null;
     this._lastY = null;
     this._totalMove = 0;
+
     this._pendingDx = 0;
     this._pendingDy = 0;
     this._pendingScroll = 0;
+
     this._moveTimer = null;
     this._moveInFlight = false;
     this._scrollInFlight = false;
+
     this._armPromise = null;
     this._armedUntilMs = 0;
+
     this._keyboardQueue = Promise.resolve();
     this._liveTextValue = "";
     this._suppressInput = false;
     this._lastSpecialKeyMs = 0;
+
     this._ignorePointerUntil = 0;
     this._timeouts = new Set();
+
     this._globalCleanupBound = false;
     this._handleWindowBlur = () => this._cancelPointerState(true);
     this._handlePageHide = () => this._cancelPointerState(true);
@@ -109,9 +128,7 @@ class PcTrackpadCard extends HTMLElement {
   }
 
   _bindGlobalCleanupEvents() {
-    if (this._globalCleanupBound) {
-      return;
-    }
+    if (this._globalCleanupBound) return;
 
     window.addEventListener("blur", this._handleWindowBlur);
     window.addEventListener("pagehide", this._handlePageHide);
@@ -122,9 +139,7 @@ class PcTrackpadCard extends HTMLElement {
   }
 
   _unbindGlobalCleanupEvents() {
-    if (!this._globalCleanupBound) {
-      return;
-    }
+    if (!this._globalCleanupBound) return;
 
     window.removeEventListener("blur", this._handleWindowBlur);
     window.removeEventListener("pagehide", this._handlePageHide);
@@ -135,11 +150,11 @@ class PcTrackpadCard extends HTMLElement {
   }
 
   _disposeRuntime() {
-    const mustRelease = this._dragButtonDown;
+    const shouldRelease = this._dragActive || this._dragWanted || this._dragButtonDown || this._dragMouseDownPending;
 
     this._clearLongPressTimer();
 
-    if (mustRelease) {
+    if (shouldRelease) {
       this._releaseAllBestEffort();
     }
 
@@ -160,22 +175,32 @@ class PcTrackpadCard extends HTMLElement {
     this._unbindGlobalCleanupEvents();
 
     this._gesture = null;
-    this._dragging = false;
-    this._dragMode = false;
+    this._pointerGesture = null;
+
+    this._dragActive = false;
+    this._dragWanted = false;
     this._dragButtonDown = false;
+    this._dragMouseDownPending = false;
+
     this._longPressTimer = null;
     this._longPressStartX = null;
     this._longPressStartY = null;
+
+    this._draggingPointer = false;
     this._lastX = null;
     this._lastY = null;
     this._totalMove = 0;
+
     this._pendingDx = 0;
     this._pendingDy = 0;
     this._pendingScroll = 0;
+
     this._moveInFlight = false;
     this._scrollInFlight = false;
+
     this._armPromise = null;
     this._armedUntilMs = 0;
+
     this._keyboardQueue = Promise.resolve();
     this._liveTextValue = "";
     this._suppressInput = false;
@@ -204,9 +229,7 @@ class PcTrackpadCard extends HTMLElement {
   }
 
   _clearLongPressTimer() {
-    if (!this._longPressTimer) {
-      return;
-    }
+    if (!this._longPressTimer) return;
 
     window.clearTimeout(this._longPressTimer);
     this._longPressTimer = null;
@@ -216,9 +239,7 @@ class PcTrackpadCard extends HTMLElement {
     try {
       const raw = window.localStorage.getItem(this.storageKey);
 
-      if (!raw) {
-        return {};
-      }
+      if (!raw) return {};
 
       return JSON.parse(raw) || {};
     } catch (_) {
@@ -479,7 +500,7 @@ class PcTrackpadCard extends HTMLElement {
           background:
             linear-gradient(
               135deg,
-              color-mix(in srgb, var(--primary-color) 20%, transparent),
+              color-mix(in srgb, var(--primary-color) 24%, transparent),
               transparent 55%
             ),
             var(--ha-card-background, var(--card-background-color));
@@ -639,6 +660,7 @@ class PcTrackpadCard extends HTMLElement {
     const pad = this.querySelector("#pad");
 
     pad.addEventListener("contextmenu", (ev) => ev.preventDefault());
+
     pad.addEventListener("touchstart", (ev) => this._touchStart(ev), { passive: false });
     pad.addEventListener("touchmove", (ev) => this._touchMove(ev), { passive: false });
     pad.addEventListener("touchend", (ev) => this._touchEnd(ev), { passive: false });
@@ -748,9 +770,7 @@ class PcTrackpadCard extends HTMLElement {
 
     const now = Date.now();
 
-    if (now - this._lastSpecialKeyMs < 60) {
-      return;
-    }
+    if (now - this._lastSpecialKeyMs < 60) return;
 
     this._lastSpecialKeyMs = now;
     this._haptic("selection");
@@ -963,9 +983,7 @@ class PcTrackpadCard extends HTMLElement {
     const input = this.querySelector("#textInput");
     const panel = this.querySelector("#keyboardPanel");
 
-    if (!input) {
-      return;
-    }
+    if (!input) return;
 
     if (panel) {
       panel.open = true;
@@ -1017,9 +1035,7 @@ class PcTrackpadCard extends HTMLElement {
 
     const oldText = this._liveTextValue || "";
 
-    if (newText === oldText) {
-      return;
-    }
+    if (newText === oldText) return;
 
     const prefixLen = this._commonPrefixLength(oldText, newText);
     const oldTail = oldText.slice(prefixLen);
@@ -1121,16 +1137,16 @@ class PcTrackpadCard extends HTMLElement {
     try {
       if ("vibrate" in navigator) {
         const patterns = {
-          selection: 8,
-          light: 20,
-          medium: 35,
-          heavy: 55,
+          selection: 12,
+          light: 25,
+          medium: 45,
+          heavy: [45, 25, 45],
           success: [20, 30, 20],
           warning: [30, 40, 30],
           failure: [50, 40, 50],
         };
 
-        navigator.vibrate(patterns[hapticType] || 20);
+        navigator.vibrate(patterns[hapticType] || 25);
       }
     } catch (_) {
       // ignore
@@ -1142,9 +1158,7 @@ class PcTrackpadCard extends HTMLElement {
 
     const now = Date.now();
 
-    if (now < this._armedUntilMs - 2000) {
-      return;
-    }
+    if (now < this._armedUntilMs - 2000) return;
 
     if (!this._armPromise) {
       this._armPromise = this
@@ -1166,9 +1180,7 @@ class PcTrackpadCard extends HTMLElement {
   _setActive(active) {
     const pad = this.querySelector("#pad");
 
-    if (!pad) {
-      return;
-    }
+    if (!pad) return;
 
     if (active) {
       pad.classList.add("active");
@@ -1227,9 +1239,7 @@ class PcTrackpadCard extends HTMLElement {
   }
 
   _movementFromLongPressStart(x, y) {
-    if (this._longPressStartX === null || this._longPressStartY === null) {
-      return 0;
-    }
+    if (this._longPressStartX === null || this._longPressStartY === null) return 0;
 
     return Math.abs(x - this._longPressStartX) + Math.abs(y - this._longPressStartY);
   }
@@ -1245,36 +1255,59 @@ class PcTrackpadCard extends HTMLElement {
     this._longPressTimer = window.setTimeout(() => {
       this._longPressTimer = null;
       this._startDragMode();
-    }, Number(this.config.long_press_drag_ms) || 450);
+    }, Number(this.config.long_press_drag_ms) || 520);
   }
 
   async _startDragMode() {
     if (this._disposed) return;
     if (!this.settings.long_press_drag) return;
-    if (this._dragMode || this._dragButtonDown) return;
-    if (!this._gesture && !this._dragging) return;
+    if (this._dragActive || this._dragButtonDown || this._dragMouseDownPending) return;
 
-    if (this._gesture && this._gesture.fingers !== 1) {
-      return;
-    }
+    const touchGestureOk =
+      this._gesture &&
+      this._gesture.maxFingers === 1 &&
+      this._gesture.active;
 
-    if (this._totalMove > (Number(this.config.drag_start_threshold_px) || 8)) {
-      return;
-    }
+    const pointerGestureOk =
+      this._pointerGesture &&
+      this._pointerGesture.active;
 
-    this._dragMode = true;
+    if (!touchGestureOk && !pointerGestureOk) return;
+
+    const maxMove = Number(this.config.drag_start_threshold_px) || 28;
+
+    if (this._totalMove > maxMove) return;
+
+    this._dragActive = true;
+    this._dragWanted = true;
+    this._dragMouseDownPending = true;
+
     this._setDragActive(true);
-    this._haptic("medium");
+    this._haptic("heavy");
 
     try {
       await this._ensureArmed(30);
-      if (this._disposed || !this._dragMode) return;
+
+      if (this._disposed) {
+        this._dragMouseDownPending = false;
+        return;
+      }
 
       await this._callBridge(this.config.service_mouse_down, { button: "left" });
-      this._dragButtonDown = true;
+
+      this._dragMouseDownPending = false;
+
+      if (this._dragWanted && this._dragActive && !this._disposed) {
+        this._dragButtonDown = true;
+        return;
+      }
+
+      await this._callBridgeBestEffort(this.config.service_mouse_up, { button: "left" });
     } catch (_) {
-      this._dragMode = false;
+      this._dragActive = false;
+      this._dragWanted = false;
       this._dragButtonDown = false;
+      this._dragMouseDownPending = false;
       this._setDragActive(false);
     }
   }
@@ -1282,30 +1315,43 @@ class PcTrackpadCard extends HTMLElement {
   async _endDragMode() {
     this._clearLongPressTimer();
 
-    if (!this._dragMode && !this._dragButtonDown) {
-      this._setDragActive(false);
-      return;
-    }
+    const shouldRelease =
+      this._dragActive ||
+      this._dragWanted ||
+      this._dragButtonDown ||
+      this._dragMouseDownPending;
 
-    this._dragMode = false;
+    this._dragActive = false;
+    this._dragWanted = false;
     this._setDragActive(false);
+
+    if (!shouldRelease) return;
 
     if (this._dragButtonDown) {
       this._dragButtonDown = false;
       await this._callBridgeBestEffort(this.config.service_mouse_up, { button: "left" });
+      return;
+    }
+
+    if (this._dragMouseDownPending) {
+      this._setTimeout(() => this._callBridgeBestEffort(this.config.service_mouse_up, { button: "left" }), 120);
     }
   }
 
   _releaseAllBestEffort() {
-    this._dragMode = false;
+    this._dragActive = false;
+    this._dragWanted = false;
     this._dragButtonDown = false;
+    this._dragMouseDownPending = false;
     this._setDragActive(false);
     this._callBridgeBestEffort(this.config.service_release_all);
   }
 
   async _releaseAll() {
-    this._dragMode = false;
+    this._dragActive = false;
+    this._dragWanted = false;
     this._dragButtonDown = false;
+    this._dragMouseDownPending = false;
     this._setDragActive(false);
     await this._callBridgeBestEffort(this.config.service_release_all);
   }
@@ -1313,19 +1359,23 @@ class PcTrackpadCard extends HTMLElement {
   _cancelPointerState(releaseButtons = false) {
     this._clearLongPressTimer();
 
-    if (releaseButtons && this._dragButtonDown) {
+    if (releaseButtons && (this._dragActive || this._dragWanted || this._dragButtonDown || this._dragMouseDownPending)) {
       this._releaseAllBestEffort();
     }
 
     this._gesture = null;
-    this._dragging = false;
-    this._dragMode = false;
-    this._dragButtonDown = false;
+    this._pointerGesture = null;
+    this._draggingPointer = false;
     this._lastX = null;
     this._lastY = null;
     this._totalMove = 0;
+
     this._setActive(false);
-    this._setDragActive(false);
+
+    if (!releaseButtons) {
+      this._setDragActive(false);
+    }
+
     this._stopLoop();
   }
 
@@ -1345,9 +1395,7 @@ class PcTrackpadCard extends HTMLElement {
   }
 
   _stopLoop() {
-    if (!this._moveTimer) {
-      return;
-    }
+    if (!this._moveTimer) return;
 
     window.clearInterval(this._moveTimer);
     this._moveTimer = null;
@@ -1367,9 +1415,7 @@ class PcTrackpadCard extends HTMLElement {
     let dx = Math.round(this._pendingDx);
     let dy = Math.round(this._pendingDy);
 
-    if (dx === 0 && dy === 0) {
-      return;
-    }
+    if (dx === 0 && dy === 0) return;
 
     dx = Math.max(-maxStep, Math.min(maxStep, dx));
     dy = Math.max(-maxStep, Math.min(maxStep, dy));
@@ -1406,9 +1452,7 @@ class PcTrackpadCard extends HTMLElement {
 
     let amount = Math.round(this._pendingScroll);
 
-    if (amount === 0) {
-      return;
-    }
+    if (amount === 0) return;
 
     amount = Math.max(-maxStep, Math.min(maxStep, amount));
     this._pendingScroll -= amount;
@@ -1437,41 +1481,52 @@ class PcTrackpadCard extends HTMLElement {
     ev.preventDefault();
     ev.stopPropagation();
 
-    this._ignorePointerUntil = Date.now() + 800;
+    this._ignorePointerUntil = Date.now() + 900;
 
     const fingers = ev.touches.length;
     const center = this._centerOfTouches(ev.touches);
 
-    this._gesture = {
-      fingers,
-      lastX: center.x,
-      lastY: center.y,
-      startTime: Date.now(),
-      totalMove: 0,
-    };
+    if (!this._gesture) {
+      this._gesture = {
+        active: true,
+        fingers,
+        maxFingers: fingers,
+        lastX: center.x,
+        lastY: center.y,
+        startX: center.x,
+        startY: center.y,
+        startTime: Date.now(),
+        totalMove: 0,
+      };
 
-    this._pendingDx = 0;
-    this._pendingDy = 0;
-    this._pendingScroll = 0;
-    this._totalMove = 0;
+      this._totalMove = 0;
+      this._pendingDx = 0;
+      this._pendingDy = 0;
+      this._pendingScroll = 0;
 
-    this._setActive(true);
+      this._setActive(true);
 
-    if (fingers === 1) {
-      this._haptic("selection");
-      this._scheduleLongPressDrag(center.x, center.y);
-    } else {
-      this._clearLongPressTimer();
-
-      if (fingers === 2) {
-        this._haptic("light");
+      if (fingers === 1) {
+        this._haptic("selection");
+        this._scheduleLongPressDrag(center.x, center.y);
       } else {
-        this._haptic("medium");
+        this._clearLongPressTimer();
+        this._haptic(fingers === 2 ? "light" : "medium");
       }
+
+      this._ensureArmed(30);
+      this._startLoop();
+      return;
     }
 
-    this._ensureArmed(30);
-    this._startLoop();
+    this._gesture.fingers = fingers;
+    this._gesture.maxFingers = Math.max(this._gesture.maxFingers, fingers);
+    this._gesture.lastX = center.x;
+    this._gesture.lastY = center.y;
+
+    if (this._gesture.maxFingers > 1) {
+      this._clearLongPressTimer();
+    }
   }
 
   _touchMove(ev) {
@@ -1480,24 +1535,20 @@ class PcTrackpadCard extends HTMLElement {
     ev.preventDefault();
     ev.stopPropagation();
 
-    if (!this._gesture || ev.touches.length === 0) {
-      return;
-    }
+    if (!this._gesture || ev.touches.length === 0) return;
 
     const fingers = ev.touches.length;
     const center = this._centerOfTouches(ev.touches);
 
-    if (fingers !== this._gesture.fingers) {
+    this._gesture.fingers = fingers;
+    this._gesture.maxFingers = Math.max(this._gesture.maxFingers, fingers);
+
+    if (this._gesture.maxFingers > 1) {
       this._clearLongPressTimer();
 
-      if (this._dragButtonDown) {
+      if (this._dragActive || this._dragButtonDown || this._dragMouseDownPending) {
         this._releaseAllBestEffort();
       }
-
-      this._gesture.fingers = fingers;
-      this._gesture.lastX = center.x;
-      this._gesture.lastY = center.y;
-      return;
     }
 
     const rawDx = center.x - this._gesture.lastX;
@@ -1508,19 +1559,21 @@ class PcTrackpadCard extends HTMLElement {
     this._gesture.totalMove += Math.abs(rawDx) + Math.abs(rawDy);
     this._totalMove = this._gesture.totalMove;
 
+    const maxMove = Number(this.config.drag_start_threshold_px) || 28;
+
     if (
-      !this._dragMode &&
-      this._movementFromLongPressStart(center.x, center.y) >
-        (Number(this.config.drag_start_threshold_px) || 8)
+      !this._dragActive &&
+      this._gesture.maxFingers === 1 &&
+      this._movementFromLongPressStart(center.x, center.y) > maxMove
     ) {
       this._clearLongPressTimer();
     }
 
-    if (fingers === 1) {
+    if (this._gesture.maxFingers === 1 && fingers === 1) {
       this._addMouseDelta(rawDx, rawDy);
     }
 
-    if (fingers === 2) {
+    if (this._gesture.maxFingers === 2 && fingers >= 2) {
       this._addScrollDelta(rawDy);
     }
   }
@@ -1538,6 +1591,10 @@ class PcTrackpadCard extends HTMLElement {
     }
 
     if (ev.touches.length > 0) {
+      const center = this._centerOfTouches(ev.touches);
+      this._gesture.fingers = ev.touches.length;
+      this._gesture.lastX = center.x;
+      this._gesture.lastY = center.y;
       return;
     }
 
@@ -1545,7 +1602,11 @@ class PcTrackpadCard extends HTMLElement {
     this._stopLoop();
     this._setActive(false);
 
-    const wasDragging = this._dragMode || this._dragButtonDown;
+    const wasDragging =
+      this._dragActive ||
+      this._dragWanted ||
+      this._dragButtonDown ||
+      this._dragMouseDownPending;
 
     if (wasDragging) {
       await this._endDragMode();
@@ -1555,14 +1616,23 @@ class PcTrackpadCard extends HTMLElement {
 
     const duration = Date.now() - this._gesture.startTime;
     const moved = this._gesture.totalMove;
-    const fingers = this._gesture.fingers;
-    const isTap = duration <= this.config.tap_max_ms && moved <= this.config.tap_threshold_px;
+    const fingers = this._gesture.maxFingers;
+
+    const maxDuration =
+      fingers >= 2
+        ? Number(this.config.multi_tap_max_ms) || 420
+        : Number(this.config.tap_max_ms) || 320;
+
+    const maxMove =
+      fingers >= 2
+        ? Number(this.config.multi_tap_threshold_px) || 36
+        : Number(this.config.tap_threshold_px) || 14;
+
+    const isTap = duration <= maxDuration && moved <= maxMove;
 
     this._gesture = null;
 
-    if (!isTap) {
-      return;
-    }
+    if (!isTap) return;
 
     if (fingers === 1) {
       this._haptic("light");
@@ -1600,8 +1670,16 @@ class PcTrackpadCard extends HTMLElement {
       // ignore
     }
 
+    this._pointerGesture = {
+      active: true,
+      startX: ev.clientX,
+      startY: ev.clientY,
+      startTime: Date.now(),
+      totalMove: 0,
+    };
+
     this._setActive(true);
-    this._dragging = true;
+    this._draggingPointer = true;
     this._lastX = ev.clientX;
     this._lastY = ev.clientY;
     this._longPressStartX = ev.clientX;
@@ -1619,7 +1697,7 @@ class PcTrackpadCard extends HTMLElement {
   _pointerMove(ev) {
     if (this._disposed) return;
     if (Date.now() < this._ignorePointerUntil) return;
-    if (!this._dragging) return;
+    if (!this._draggingPointer || !this._pointerGesture) return;
 
     ev.preventDefault();
 
@@ -1635,11 +1713,13 @@ class PcTrackpadCard extends HTMLElement {
       this._lastX = event.clientX;
       this._lastY = event.clientY;
       this._totalMove += Math.abs(rawDx) + Math.abs(rawDy);
+      this._pointerGesture.totalMove = this._totalMove;
+
+      const maxMove = Number(this.config.drag_start_threshold_px) || 28;
 
       if (
-        !this._dragMode &&
-        this._movementFromLongPressStart(event.clientX, event.clientY) >
-          (Number(this.config.drag_start_threshold_px) || 8)
+        !this._dragActive &&
+        this._movementFromLongPressStart(event.clientX, event.clientY) > maxMove
       ) {
         this._clearLongPressTimer();
       }
@@ -1651,7 +1731,7 @@ class PcTrackpadCard extends HTMLElement {
   async _pointerUp(ev) {
     if (this._disposed) return;
     if (Date.now() < this._ignorePointerUntil) return;
-    if (!this._dragging) return;
+    if (!this._draggingPointer) return;
 
     ev.preventDefault();
 
@@ -1659,10 +1739,16 @@ class PcTrackpadCard extends HTMLElement {
     this._stopLoop();
     this._setActive(false);
 
-    const wasDragging = this._dragMode || this._dragButtonDown;
-    const wasTap = this._totalMove <= this.config.tap_threshold_px;
+    const wasDragging =
+      this._dragActive ||
+      this._dragWanted ||
+      this._dragButtonDown ||
+      this._dragMouseDownPending;
 
-    this._dragging = false;
+    const wasTap = this._totalMove <= (Number(this.config.tap_threshold_px) || 14);
+
+    this._draggingPointer = false;
+    this._pointerGesture = null;
     this._lastX = null;
     this._lastY = null;
 
