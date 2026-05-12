@@ -27,6 +27,9 @@ SERVICE_POSITION = "position"
 SERVICE_MOVE = "move"
 SERVICE_MOVE_RELATIVE = "move_relative"
 SERVICE_CLICK = "click"
+SERVICE_MOUSE_DOWN = "mouse_down"
+SERVICE_MOUSE_UP = "mouse_up"
+SERVICE_RELEASE_ALL = "release_all"
 SERVICE_SCROLL = "scroll"
 SERVICE_WRITE = "write"
 SERVICE_PRESS = "press"
@@ -37,6 +40,8 @@ PANEL_URL_PATH = "/ha_input_bridge/pc-trackpad-panel.js"
 
 CARD_FILE = Path(__file__).parent / "www" / "pc-trackpad-card.js"
 PANEL_FILE = Path(__file__).parent / "www" / "pc-trackpad-panel.js"
+
+MOUSE_BUTTON_SCHEMA = vol.In(["left", "right", "middle"])
 
 SERVICE_ARM_SCHEMA = vol.Schema(
     {
@@ -77,15 +82,21 @@ SERVICE_MOVE_RELATIVE_SCHEMA = vol.Schema(
 
 SERVICE_CLICK_SCHEMA = vol.Schema(
     {
-        vol.Optional("button", default="left"): vol.In(
-            ["left", "right", "middle"]
-        ),
+        vol.Optional("button", default="left"): MOUSE_BUTTON_SCHEMA,
         vol.Optional("clicks", default=1): vol.All(
             vol.Coerce(int),
             vol.Range(min=1, max=3),
         ),
     }
 )
+
+SERVICE_MOUSE_BUTTON_SCHEMA = vol.Schema(
+    {
+        vol.Optional("button", default="left"): MOUSE_BUTTON_SCHEMA,
+    }
+)
+
+SERVICE_RELEASE_ALL_SCHEMA = vol.Schema({})
 
 SERVICE_SCROLL_SCHEMA = vol.Schema(
     {
@@ -210,6 +221,21 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             call.data["clicks"],
         )
 
+    async def handle_mouse_down(call: ServiceCall) -> None:
+        await call_bridge(
+            "mouse_down",
+            call.data["button"],
+        )
+
+    async def handle_mouse_up(call: ServiceCall) -> None:
+        await call_bridge(
+            "mouse_up",
+            call.data["button"],
+        )
+
+    async def handle_release_all(call: ServiceCall) -> None:
+        await call_bridge("release_all")
+
     async def handle_scroll(call: ServiceCall) -> None:
         await call_bridge(
             "scroll",
@@ -269,6 +295,27 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         SERVICE_CLICK,
         handle_click,
         schema=SERVICE_CLICK_SCHEMA,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_MOUSE_DOWN,
+        handle_mouse_down,
+        schema=SERVICE_MOUSE_BUTTON_SCHEMA,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_MOUSE_UP,
+        handle_mouse_up,
+        schema=SERVICE_MOUSE_BUTTON_SCHEMA,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_RELEASE_ALL,
+        handle_release_all,
+        schema=SERVICE_RELEASE_ALL_SCHEMA,
     )
 
     hass.services.async_register(
