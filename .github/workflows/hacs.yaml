@@ -11,9 +11,11 @@ permissions: {}
 
 jobs:
   hacs:
+    name: Run HACS validation
     runs-on: ubuntu-latest
+
     steps:
-      - name: HACS validation
+      - name: Run HACS validation
         uses: hacs/action@main
         with:
           category: integration
