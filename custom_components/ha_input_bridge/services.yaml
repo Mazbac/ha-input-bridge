@@ -13,10 +13,49 @@ arm:
           max: 120
           step: 1
           mode: slider
+    cancel_on_manual_mouse:
+      name: Cancel on manual mouse movement
+      description: Stop playback if the Windows user physically moves the mouse during an active playback session.
+      required: false
+      default: true
+      selector:
+        boolean: {}
+    manual_mouse_cancel_threshold_px:
+      name: Manual mouse cancel threshold
+      description: Number of pixels the physical mouse may move away from the expected bridge position before playback is cancelled.
+      required: false
+      default: 8
+      selector:
+        number:
+          min: 2
+          max: 250
+          step: 1
+          mode: slider
+          unit_of_measurement: px
+    manual_mouse_grace_ms:
+      name: Manual mouse grace period
+      description: Delay after bridge-generated mouse input before manual mouse movement can cancel playback. This prevents synthetic movement from cancelling itself.
+      required: false
+      default: 250
+      selector:
+        number:
+          min: 0
+          max: 3000
+          step: 50
+          mode: slider
+          unit_of_measurement: ms
 
 position:
   name: Get mouse position
   description: Return the current mouse position and virtual desktop bounds.
+
+state:
+  name: Get bridge state
+  description: Return bridge arming, playback, cancellation, mouse position, and virtual desktop state.
+
+cancel:
+  name: Cancel playback
+  description: Cancel the active playback session and release all mouse buttons.
 
 move:
   name: Move mouse
@@ -141,8 +180,8 @@ scroll:
       required: true
       selector:
         number:
-          min: -120
-          max: 120
+          min: -2000
+          max: 2000
           step: 1
           mode: box
 
