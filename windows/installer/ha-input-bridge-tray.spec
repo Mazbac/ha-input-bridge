@@ -1,6 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
+from PyInstaller.utils.hooks import (
+    collect_data_files,
+    collect_submodules,
+    copy_metadata,
+)
 
 hiddenimports = []
 hiddenimports += collect_submodules("pystray")
@@ -8,6 +12,7 @@ hiddenimports += collect_submodules("PIL")
 hiddenimports += collect_submodules("pynput")
 
 hiddenimports += [
+    "ha_input_bridge_recorder",
     "pynput",
     "pynput.mouse",
     "pynput.keyboard",
