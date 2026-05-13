@@ -13,26 +13,30 @@ $AgentSpecFile = Join-Path $InstallerDir "ha-input-bridge-agent.spec"
 $TraySpecFile = Join-Path $InstallerDir "ha-input-bridge-tray.spec"
 $InnoScript = Join-Path $InstallerDir "HAInputBridgeSetup.iss"
 
+$AgentSourceFile = Join-Path $WindowsDir "ha_input_bridge.py"
+$TraySourceFile = Join-Path $WindowsDir "ha_input_bridge_tray.py"
+$RecorderSourceFile = Join-Path $WindowsDir "ha_input_bridge_recorder.py"
+
 $AgentDistExe = Join-Path $InstallerDir "dist\ha-input-bridge-agent.exe"
 $TrayDistExe = Join-Path $InstallerDir "dist\ha-input-bridge-tray.exe"
 $SetupExe = Join-Path $InstallerDir "dist\HA-Input-Bridge-Setup.exe"
 
 Write-Host ""
 Write-Host "HA Input Bridge Windows installer build"
-Write-Host "Repo root: $RepoRoot"
-Write-Host "Windows dir: $WindowsDir"
-Write-Host "Installer dir: $InstallerDir"
+Write-Host "Repo root:      $RepoRoot"
+Write-Host "Windows dir:    $WindowsDir"
+Write-Host "Installer dir:  $InstallerDir"
 Write-Host ""
 
-if (-not (Test-Path (Join-Path $WindowsDir "ha_input_bridge.py"))) {
+if (-not (Test-Path $AgentSourceFile)) {
   throw "Missing windows\ha_input_bridge.py"
 }
 
-if (-not (Test-Path (Join-Path $WindowsDir "ha_input_bridge_tray.py"))) {
+if (-not (Test-Path $TraySourceFile)) {
   throw "Missing windows\ha_input_bridge_tray.py"
 }
 
-if (-not (Test-Path (Join-Path $WindowsDir "ha_input_bridge_recorder.py"))) {
+if (-not (Test-Path $RecorderSourceFile)) {
   throw "Missing windows\ha_input_bridge_recorder.py"
 }
 
@@ -47,8 +51,6 @@ if (-not (Test-Path $TraySpecFile)) {
 if (-not (Test-Path $InnoScript)) {
   throw "Missing $InnoScript"
 }
-
-Remove-Item -Path $VenvDir -Recurse -Force -ErrorAction SilentlyContinue
 
 $PythonCommand = Get-Command py -ErrorAction SilentlyContinue
 
@@ -67,26 +69,54 @@ else {
   & python -m venv $VenvDir
 }
 
+if (-not (Test-Path $PythonExe)) {
+  throw "Virtual environment Python was not created: $PythonExe"
+}
+
 Write-Host "Upgrading pip..."
 & $PythonExe -m pip install --upgrade pip
 
 Write-Host "Installing build dependencies..."
-& $PipExe install --no-cache-dir `
-  pyinstaller `
-  flask `
-  waitress `
-  pyautogui `
-  pystray `
-  pillow `
-  "pynput>=1.7.7,<2"
+& $PipExe install `
+  "pyinstaller>=6,<7" `
+  "flask>=3,<4" `
+  "waitress>=3,<4" `
+  "pyautogui>=0.9.54,<1" `
+  "pystray>=0.19,<1" `
+  "pillow>=10,<12" `
+  "pynput>=1.7.7,<2" `
+  "six>=1.16,<2"
 
-Write-Host "Verifying Python dependencies..."
-& $PythonExe -c "import flask, waitress, pyautogui, pystray, PIL, pynput; from pynput import mouse, keyboard; print('dependency verification ok')"
+Write-Host ""
+Write-Host "Installed package versions:"
+& $PipExe freeze
+
+Write-Host ""
+Write-Host "Verifying Python syntax..."
+& $PythonExe -m py_compile $AgentSourceFile
+& $PythonExe -m py_compile $TraySourceFile
+& $PythonExe -m py_compile $RecorderSourceFile
+
+Write-Host "Verifying runtime imports..."
+$ImportCheck = @"
+import flask
+import waitress
+import pyautogui
+import pystray
+import PIL
+import pynput
+from pynput import mouse, keyboard
+import six
+print("Import check OK")
+"@
+
+& $PythonExe -c $ImportCheck
 
 Write-Host "Cleaning old build output..."
 Remove-Item -Path (Join-Path $InstallerDir "build") -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -Path (Join-Path $InstallerDir "dist") -Recurse -Force -ErrorAction SilentlyContinue
 
+Write-Host ""
 Write-Host "Building agent executable with PyInstaller..."
 Push-Location $InstallerDir
 try {
@@ -103,6 +133,7 @@ if (-not (Test-Path $AgentDistExe)) {
 Write-Host "Agent built:"
 Write-Host $AgentDistExe
 
+Write-Host ""
 Write-Host "Building tray executable with PyInstaller..."
 Push-Location $InstallerDir
 try {
@@ -119,11 +150,14 @@ if (-not (Test-Path $TrayDistExe)) {
 Write-Host "Tray app built:"
 Write-Host $TrayDistExe
 
-Write-Host "Verifying tray executable exists and has size..."
-$TraySize = (Get-Item $TrayDistExe).Length
+Write-Host ""
+Write-Host "Verifying built executables exist..."
+if ((Get-Item $AgentDistExe).Length -le 0) {
+  throw "Agent executable is empty: $AgentDistExe"
+}
 
-if ($TraySize -lt 1000000) {
-  throw "Tray executable looks too small: $TraySize bytes"
+if ((Get-Item $TrayDistExe).Length -le 0) {
+  throw "Tray executable is empty: $TrayDistExe"
 }
 
 $IsccExe = $null
@@ -158,6 +192,7 @@ if (-not $IsccExe) {
   throw "Inno Setup compiler ISCC.exe was not found. Install Inno Setup 6 or 7 first."
 }
 
+Write-Host ""
 Write-Host "Using Inno Setup compiler:"
 Write-Host $IsccExe
 
@@ -172,6 +207,10 @@ finally {
 
 if (-not (Test-Path $SetupExe)) {
   throw "Inno Setup did not create $SetupExe"
+}
+
+if ((Get-Item $SetupExe).Length -le 0) {
+  throw "Installer executable is empty: $SetupExe"
 }
 
 Write-Host ""
