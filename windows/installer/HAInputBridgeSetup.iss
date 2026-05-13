@@ -1,5 +1,5 @@
 #define MyAppName "HA Input Bridge"
-#define MyAppVersion "0.9.0"
+#define MyAppVersion "0.9.1"
 #define MyAppPublisher "Mazbac"
 #define MyAgentExeName "ha-input-bridge-agent.exe"
 #define MyTrayExeName "ha-input-bridge-tray.exe"
@@ -35,6 +35,7 @@ Source: "dist\{#MyTrayExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Name: "{autoprograms}\HA Input Bridge\HA Input Bridge Tray"; Filename: "{app}\{#MyTrayExeName}"
 Name: "{autoprograms}\HA Input Bridge\Connection Info"; Filename: "{app}\connection-info.txt"
 Name: "{autoprograms}\HA Input Bridge\Logs Folder"; Filename: "{commonappdata}\HA Input Bridge"
+Name: "{autoprograms}\HA Input Bridge\Recordings Folder"; Filename: "{commonappdata}\HA Input Bridge\recordings"
 Name: "{autoprograms}\HA Input Bridge\Install Folder"; Filename: "{app}"
 Name: "{autodesktop}\HA Input Bridge"; Filename: "{app}\{#MyTrayExeName}"; Tasks: desktopicon
 Name: "{userstartup}\HA Input Bridge Tray"; Filename: "{app}\{#MyTrayExeName}"; Tasks: starttrayonlogin
@@ -85,6 +86,9 @@ begin
   S := S + '$DefaultAllowedClientIp = ""' + CRLF();
   S := S + '$DefaultFirewallRemoteAddress = "LocalSubnet"' + CRLF();
   S := S + '$DefaultPort = 8765' + CRLF();
+  S := S + '$DefaultCancelOnManualMouse = $true' + CRLF();
+  S := S + '$DefaultManualMouseCancelThresholdPx = 8' + CRLF();
+  S := S + '$DefaultManualMouseGraceMs = 250' + CRLF();
   S := S + '$CurrentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name' + CRLF();
   S := S + CRLF();
 
@@ -139,6 +143,9 @@ begin
   S := S + '$Token = ""' + CRLF();
   S := S + '$StartBridgeOnLogin = $true' + CRLF();
   S := S + '$StartTrayOnLogin = $true' + CRLF();
+  S := S + '$CancelOnManualMouse = $DefaultCancelOnManualMouse' + CRLF();
+  S := S + '$ManualMouseCancelThresholdPx = $DefaultManualMouseCancelThresholdPx' + CRLF();
+  S := S + '$ManualMouseGraceMs = $DefaultManualMouseGraceMs' + CRLF();
   S := S + CRLF();
 
   S := S + 'if ($null -ne $ExistingConfig) {' + CRLF();
@@ -150,12 +157,17 @@ begin
   S := S + '  if ($ExistingConfig.token) { $Token = [string]$ExistingConfig.token }' + CRLF();
   S := S + '  if ($null -ne $ExistingConfig.start_bridge_on_login) { $StartBridgeOnLogin = [bool]$ExistingConfig.start_bridge_on_login }' + CRLF();
   S := S + '  if ($null -ne $ExistingConfig.start_tray_on_login) { $StartTrayOnLogin = [bool]$ExistingConfig.start_tray_on_login }' + CRLF();
+  S := S + '  if ($null -ne $ExistingConfig.cancel_on_manual_mouse) { $CancelOnManualMouse = [bool]$ExistingConfig.cancel_on_manual_mouse }' + CRLF();
+  S := S + '  if ($ExistingConfig.manual_mouse_cancel_threshold_px) { $ManualMouseCancelThresholdPx = [int]$ExistingConfig.manual_mouse_cancel_threshold_px }' + CRLF();
+  S := S + '  if ($ExistingConfig.manual_mouse_grace_ms) { $ManualMouseGraceMs = [int]$ExistingConfig.manual_mouse_grace_ms }' + CRLF();
   S := S + '}' + CRLF();
   S := S + CRLF();
 
   S := S + 'if ($Port -lt 1 -or $Port -gt 65535) { $Port = $DefaultPort }' + CRLF();
   S := S + 'if ([string]::IsNullOrWhiteSpace($BindHost)) { $BindHost = $DefaultBindHost }' + CRLF();
   S := S + 'if ([string]::IsNullOrWhiteSpace($FirewallRemoteAddress)) { $FirewallRemoteAddress = $DefaultFirewallRemoteAddress }' + CRLF();
+  S := S + 'if ($ManualMouseCancelThresholdPx -lt 2 -or $ManualMouseCancelThresholdPx -gt 250) { $ManualMouseCancelThresholdPx = $DefaultManualMouseCancelThresholdPx }' + CRLF();
+  S := S + 'if ($ManualMouseGraceMs -lt 0 -or $ManualMouseGraceMs -gt 3000) { $ManualMouseGraceMs = $DefaultManualMouseGraceMs }' + CRLF();
   S := S + CRLF();
 
   S := S + 'if ([string]::IsNullOrWhiteSpace($Token)) {' + CRLF();
@@ -181,6 +193,9 @@ begin
   S := S + '  log_file = $BridgeLog' + CRLF();
   S := S + '  start_bridge_on_login = $StartBridgeOnLogin' + CRLF();
   S := S + '  start_tray_on_login = $StartTrayOnLogin' + CRLF();
+  S := S + '  cancel_on_manual_mouse = $CancelOnManualMouse' + CRLF();
+  S := S + '  manual_mouse_cancel_threshold_px = [int]$ManualMouseCancelThresholdPx' + CRLF();
+  S := S + '  manual_mouse_grace_ms = [int]$ManualMouseGraceMs' + CRLF();
   S := S + '}' + CRLF();
   S := S + '$Config | ConvertTo-Json -Depth 5 | Set-Content -Path $ConfigPath -Encoding UTF8' + CRLF();
   S := S + CRLF();
@@ -257,6 +272,11 @@ begin
   S := S + 'Firewall remote address:' + CRLF();
   S := S + '$FirewallRemoteAddress' + CRLF();
   S := S + '' + CRLF();
+  S := S + 'Playback safety:' + CRLF();
+  S := S + 'Cancel on manual mouse movement: $CancelOnManualMouse' + CRLF();
+  S := S + 'Manual mouse cancel threshold px: $ManualMouseCancelThresholdPx' + CRLF();
+  S := S + 'Manual mouse grace ms: $ManualMouseGraceMs' + CRLF();
+  S := S + '' + CRLF();
   S := S + 'Tray app:' + CRLF();
   S := S + '$TrayExe' + CRLF();
   S := S + '' + CRLF();
@@ -311,7 +331,7 @@ begin
 
     if ResultCode <> 0 then
     begin
-      MsgBox('PowerShell post-install step failed. Check the setup log.', mbError, MB_OK);
+      MsgBox('PowerShell post-install step failed.' + CRLF() + 'Check the setup log.', mbError, MB_OK);
       Exit;
     end;
 
