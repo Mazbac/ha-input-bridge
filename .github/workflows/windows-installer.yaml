@@ -21,18 +21,47 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: "3.12"
 
       - name: Install Inno Setup
         shell: pwsh
         run: |
           choco install innosetup -y --no-progress
 
+      - name: Show tool versions
+        shell: pwsh
+        run: |
+          python --version
+          py --version
+          Get-Command python
+          Get-Command py -ErrorAction SilentlyContinue
+          Get-Command ISCC.exe -ErrorAction SilentlyContinue
+
       - name: Build installer
         shell: pwsh
         run: |
           Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
           .\windows\installer\build.ps1
+
+      - name: Verify installer artifact
+        shell: pwsh
+        run: |
+          $Installer = "windows\installer\dist\HA-Input-Bridge-Setup.exe"
+
+          if (-not (Test-Path $Installer)) {
+            throw "Installer was not created: $Installer"
+          }
+
+          $Item = Get-Item $Installer
+
+          if ($Item.Length -le 0) {
+            throw "Installer is empty: $Installer"
+          }
+
+          Write-Host "Installer artifact:"
+          Write-Host $Item.FullName
+          Write-Host "Size bytes:"
+          Write-Host $Item.Length
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
@@ -51,9 +80,17 @@ jobs:
           $Repo = "${{ github.repository }}"
           $Installer = "windows/installer/dist/HA-Input-Bridge-Setup.exe"
 
+          if (-not (Test-Path $Installer)) {
+            throw "Installer was not created: $Installer"
+          }
+
           gh release view $Tag --repo $Repo
+
           if ($LASTEXITCODE -ne 0) {
-            gh release create $Tag --repo $Repo --title $Tag --notes "Automated Windows installer build."
+            gh release create $Tag `
+              --repo $Repo `
+              --title "HA Input Bridge $Tag" `
+              --notes "Automated Windows installer build."
           }
 
           gh release upload $Tag $Installer --repo $Repo --clobber
