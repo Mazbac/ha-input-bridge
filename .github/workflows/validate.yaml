@@ -1,0 +1,125 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate repository files
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install YAML parser
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyyaml
+
+      - name: Validate Python syntax
+        run: |
+          python -m py_compile \
+            windows/ha_input_bridge.py \
+            windows/ha_input_bridge_tray.py \
+            windows/ha_input_bridge_recorder.py \
+            custom_components/ha_input_bridge/api.py \
+            custom_components/ha_input_bridge/__init__.py \
+            custom_components/ha_input_bridge/config_flow.py \
+            custom_components/ha_input_bridge/const.py
+
+      - name: Validate JSON files
+        run: |
+          python -m json.tool custom_components/ha_input_bridge/manifest.json > /dev/null
+          python -m json.tool hacs.json > /dev/null
+
+      - name: Validate YAML files
+        run: |
+          python - <<'PY'
+          import pathlib
+          import yaml
+
+          files = [
+              "custom_components/ha_input_bridge/services.yaml",
+              ".github/workflows/validate.yaml",
+              ".github/workflows/windows-installer.yaml",
+              ".github/workflows/hassfest.yaml",
+              ".github/workflows/hacs.yaml",
+          ]
+
+          for file_name in files:
+              path = pathlib.Path(file_name)
+              if not path.exists():
+                  raise SystemExit(f"Missing YAML file: {file_name}")
+
+              with path.open("r", encoding="utf-8") as file:
+                  yaml.safe_load(file)
+
+              print(f"YAML OK: {file_name}")
+          PY
+
+      - name: Validate JavaScript syntax
+        run: |
+          node --check custom_components/ha_input_bridge/www/pc-trackpad-card.js
+          node --check custom_components/ha_input_bridge/www/pc-trackpad-panel.js
+
+      - name: Check v0.9.1 version sync
+        run: |
+          python - <<'PY'
+          import json
+          import pathlib
+          import re
+
+          manifest = json.loads(pathlib.Path("custom_components/ha_input_bridge/manifest.json").read_text(encoding="utf-8"))
+          if manifest.get("version") != "0.9.1":
+              raise SystemExit(f"manifest.json version mismatch: {manifest.get('version')}")
+
+          iss = pathlib.Path("windows/installer/HAInputBridgeSetup.iss").read_text(encoding="utf-8")
+          if '#define MyAppVersion "0.9.1"' not in iss:
+              raise SystemExit("HAInputBridgeSetup.iss version mismatch")
+
+          services = pathlib.Path("custom_components/ha_input_bridge/services.yaml").read_text(encoding="utf-8")
+          required_services = [
+              "arm:",
+              "position:",
+              "state:",
+              "cancel:",
+              "move:",
+              "move_relative:",
+              "click:",
+              "mouse_down:",
+              "mouse_up:",
+              "release_all:",
+              "scroll:",
+              "write:",
+              "press:",
+              "hotkey:",
+          ]
+
+          for service in required_services:
+              if re.search(rf"^{re.escape(service)}", services, re.MULTILINE) is None:
+                  raise SystemExit(f"Missing service: {service}")
+
+          if "max: 2000" not in services:
+              raise SystemExit("services.yaml does not allow scroll max 2000")
+
+          if "min: -2000" not in services:
+              raise SystemExit("services.yaml does not allow scroll min -2000")
+
+          print("Version and service checks OK")
+          PY
