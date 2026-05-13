@@ -11,7 +11,12 @@ from homeassistant.components.frontend import async_register_built_in_panel
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PORT, CONF_TOKEN
-from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
+from homeassistant.core import (
+    HomeAssistant,
+    ServiceCall,
+    ServiceResponse,
+    SupportsResponse,
+)
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -24,6 +29,8 @@ CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)
 
 SERVICE_ARM = "arm"
 SERVICE_POSITION = "position"
+SERVICE_STATE = "state"
+SERVICE_CANCEL = "cancel"
 SERVICE_MOVE = "move"
 SERVICE_MOVE_RELATIVE = "move_relative"
 SERVICE_CLICK = "click"
@@ -37,7 +44,6 @@ SERVICE_HOTKEY = "hotkey"
 
 CARD_URL_PATH = "/ha_input_bridge/pc-trackpad-card.js"
 PANEL_URL_PATH = "/ha_input_bridge/pc-trackpad-panel.js"
-
 CARD_FILE = Path(__file__).parent / "www" / "pc-trackpad-card.js"
 PANEL_FILE = Path(__file__).parent / "www" / "pc-trackpad-panel.js"
 
@@ -49,10 +55,21 @@ SERVICE_ARM_SCHEMA = vol.Schema(
             vol.Coerce(int),
             vol.Range(min=1, max=120),
         ),
+        vol.Optional("cancel_on_manual_mouse", default=True): cv.boolean,
+        vol.Optional("manual_mouse_cancel_threshold_px", default=8): vol.All(
+            vol.Coerce(int),
+            vol.Range(min=2, max=250),
+        ),
+        vol.Optional("manual_mouse_grace_ms", default=250): vol.All(
+            vol.Coerce(int),
+            vol.Range(min=0, max=3000),
+        ),
     }
 )
 
 SERVICE_POSITION_SCHEMA = vol.Schema({})
+SERVICE_STATE_SCHEMA = vol.Schema({})
+SERVICE_CANCEL_SCHEMA = vol.Schema({})
 
 SERVICE_MOVE_SCHEMA = vol.Schema(
     {
@@ -102,7 +119,7 @@ SERVICE_SCROLL_SCHEMA = vol.Schema(
     {
         vol.Required("amount"): vol.All(
             vol.Coerce(int),
-            vol.Range(min=-120, max=120),
+            vol.Range(min=-2000, max=2000),
         ),
     }
 )
@@ -174,19 +191,22 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         """Return the first loaded bridge client."""
         for entry in hass.config_entries.async_entries(DOMAIN):
             client = getattr(entry, "runtime_data", None)
-
             if isinstance(client, HAInputBridgeClient):
                 return client
 
         raise ServiceValidationError("No loaded HA Input Bridge instance is configured")
 
-    async def call_bridge(method_name: str, *args: Any) -> dict[str, Any]:
+    async def call_bridge(
+        method_name: str,
+        *args: Any,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         """Call a bridge API method and convert errors for Home Assistant."""
         client = await get_client()
         method = getattr(client, method_name)
 
         try:
-            return await method(*args)
+            return await method(*args, **kwargs)
         except InvalidAuth as err:
             raise HomeAssistantError("Invalid HA Input Bridge token") from err
         except CannotConnect as err:
@@ -194,11 +214,25 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         except BridgeApiError as err:
             raise HomeAssistantError(str(err)) from err
 
-    async def handle_arm(call: ServiceCall) -> None:
-        await call_bridge("arm", call.data["seconds"])
+    async def handle_arm(call: ServiceCall) -> ServiceResponse:
+        return await call_bridge(
+            "arm",
+            call.data["seconds"],
+            cancel_on_manual_mouse=call.data["cancel_on_manual_mouse"],
+            manual_mouse_cancel_threshold_px=call.data[
+                "manual_mouse_cancel_threshold_px"
+            ],
+            manual_mouse_grace_ms=call.data["manual_mouse_grace_ms"],
+        )
 
     async def handle_position(call: ServiceCall) -> ServiceResponse:
         return await call_bridge("position")
+
+    async def handle_state(call: ServiceCall) -> ServiceResponse:
+        return await call_bridge("state")
+
+    async def handle_cancel(call: ServiceCall) -> ServiceResponse:
+        return await call_bridge("cancel")
 
     async def handle_move(call: ServiceCall) -> None:
         await call_bridge(
@@ -266,6 +300,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         SERVICE_ARM,
         handle_arm,
         schema=SERVICE_ARM_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
     )
 
     hass.services.async_register(
@@ -274,6 +309,22 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         handle_position,
         schema=SERVICE_POSITION_SCHEMA,
         supports_response=SupportsResponse.ONLY,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_STATE,
+        handle_state,
+        schema=SERVICE_STATE_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CANCEL,
+        handle_cancel,
+        schema=SERVICE_CANCEL_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
     )
 
     hass.services.async_register(
@@ -360,7 +411,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         token=entry.data[CONF_TOKEN],
         timeout_seconds=DEFAULT_TIMEOUT,
     )
-
     entry.runtime_data = client
 
     return True
@@ -369,5 +419,4 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload HA Input Bridge config entry."""
     entry.runtime_data = None
-
     return True
