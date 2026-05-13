@@ -4,6 +4,7 @@ import json
 import math
 import threading
 import time
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -17,14 +18,11 @@ RecordingMode = Literal["mouse", "mouse_keyboard"]
 MIN_DELAY_MS = 80
 DELAY_ROUND_MS = 50
 MAX_DELAY_MS = 5000
-
 TEXT_PAUSE_SPLIT_MS = 700
-
 START_RECORDING_IGNORE_MS = 1000
 
 DOUBLE_CLICK_MS = 350
 DOUBLE_CLICK_DISTANCE_PX = 6
-
 CLICK_MAX_MS = 500
 CLICK_MAX_DISTANCE_PX = 8
 
@@ -33,8 +31,10 @@ DRAG_START_MIN_DISTANCE_PX = 12
 DRAG_MOVE_MIN_INTERVAL_MS = 120
 DRAG_MOVE_MIN_DISTANCE_PX = 20
 
-SCROLL_MULTIPLIER = 10
-MAX_SCROLL_AMOUNT = 120
+SCROLL_MULTIPLIER = 40
+SCROLL_BURST_MAX_GAP_MS = 300
+SCROLL_BURST_MOVE_TOLERANCE_PX = 120
+MAX_SCROLL_AMOUNT = 2000
 
 DEFAULT_ALIAS = "PC - Recorded input"
 
@@ -79,6 +79,8 @@ MOUSE_BUTTON_MAP = {
     mouse.Button.middle: "middle",
 }
 
+SAFE_HOTKEY_NAME_CHARS = set("abcdefghijklmnopqrstuvwxyz0123456789_+-")
+
 
 @dataclass
 class MouseDownState:
@@ -90,6 +92,15 @@ class MouseDownState:
     last_drag_move_x: int | None = None
     last_drag_move_y: int | None = None
     last_drag_move_time_ms: int | None = None
+
+
+@dataclass
+class ScrollBurstState:
+    x: int
+    y: int
+    start_time_ms: int
+    last_time_ms: int
+    amount: int
 
 
 class RecorderError(Exception):
@@ -114,36 +125,34 @@ class HAInputBridgeRecorder:
         self.start_ignore_ms = int(start_ignore_ms)
 
         self._lock = threading.RLock()
-
         self._recording = False
         self._cancelled = False
-
         self._started_at_ms = 0
         self._ignore_until_ms = 0
         self._stopped_at_ms = 0
 
         self._actions: list[dict[str, Any]] = []
-
         self._last_output_time_ms: int | None = None
+
         self._last_mouse_x: int | None = None
         self._last_mouse_y: int | None = None
         self._last_emitted_mouse_x: int | None = None
         self._last_emitted_mouse_y: int | None = None
-
         self._mouse_down: dict[str, MouseDownState] = {}
+        self._scroll_burst: ScrollBurstState | None = None
 
         self._text_buffer = ""
         self._text_start_time_ms: int | None = None
         self._text_last_time_ms: int | None = None
+        self._skipped_text_char_count = 0
+        self._skipped_key_count = 0
 
         self._pressed_modifiers: set[str] = set()
         self._hotkey_down_keys: set[str] = set()
 
         self._mouse_listener: mouse.Listener | None = None
         self._keyboard_listener: keyboard.Listener | None = None
-
         self._last_recording_file: Path | None = None
-
         self._ignore_rects: list[tuple[int, int, int, int]] = []
 
     @property
@@ -159,12 +168,9 @@ class HAInputBridgeRecorder:
     def set_ignore_rects(self, rects: list[tuple[int, int, int, int]]) -> None:
         """Set screen rectangles that should be ignored by mouse recording.
 
-        Rect tuple format:
-        (left, top, right, bottom)
+        Rect tuple format: (left, top, right, bottom).
         """
-
         normalized: list[tuple[int, int, int, int]] = []
-
         for rect in rects:
             try:
                 left, top, right, bottom = rect
@@ -177,10 +183,8 @@ class HAInputBridgeRecorder:
 
             if right < left:
                 left, right = right, left
-
             if bottom < top:
                 top, bottom = bottom, top
-
             normalized.append((left, top, right, bottom))
 
         with self._lock:
@@ -188,7 +192,6 @@ class HAInputBridgeRecorder:
 
     def start(self) -> None:
         """Start listeners."""
-
         with self._lock:
             if self._recording:
                 raise RecorderError("Recorder is already running")
@@ -215,18 +218,16 @@ class HAInputBridgeRecorder:
 
     def stop_and_save(self) -> tuple[str, Path]:
         """Stop listeners, generate YAML, save it, and return content plus path."""
-
         with self._lock:
             if not self._recording:
                 raise RecorderError("Recorder is not running")
-
             self._stopped_at_ms = self._now_ms()
             self._recording = False
-
-        self._stop_listeners()
+            self._stop_listeners()
 
         with self._lock:
             self._flush_text_locked(self._stopped_at_ms)
+            self._flush_scroll_burst_locked(self._stopped_at_ms)
             self._finalize_open_mouse_buttons_locked(self._stopped_at_ms)
 
             if (
@@ -244,61 +245,62 @@ class HAInputBridgeRecorder:
             yaml_text = self._build_yaml_locked()
             path = self._save_yaml_locked(yaml_text)
             self._last_recording_file = path
-
             return yaml_text, path
 
     def stop_without_saving(self) -> None:
         """Stop listeners and discard current recording."""
-
         with self._lock:
             if not self._recording:
                 return
-
             self._recording = False
             self._cancelled = True
-
-        self._stop_listeners()
+            self._stop_listeners()
 
     def get_status(self) -> dict[str, Any]:
         """Return recorder status for UI."""
-
         with self._lock:
             now = self._now_ms()
             duration_ms = max(0, now - self._started_at_ms) if self._started_at_ms else 0
+            action_count = len([a for a in self._actions if a.get("type") != "delay"])
+            pending_scroll_amount = self._scroll_burst.amount if self._scroll_burst else 0
 
             return {
                 "recording": self._recording,
                 "mode": self.mode,
                 "duration_ms": duration_ms,
-                "action_count": len([a for a in self._actions if a.get("type") != "delay"]),
+                "action_count": action_count,
                 "raw_action_count": len(self._actions),
                 "last_mouse_x": self._last_mouse_x,
                 "last_mouse_y": self._last_mouse_y,
                 "text_buffer_length": len(self._text_buffer),
+                "pending_scroll_amount": pending_scroll_amount,
+                "skipped_text_char_count": self._skipped_text_char_count,
+                "skipped_key_count": self._skipped_key_count,
                 "last_recording_file": str(self._last_recording_file) if self._last_recording_file else "",
             }
 
     def _reset_state(self) -> None:
         self._recording = False
         self._cancelled = False
-
         self._started_at_ms = 0
         self._ignore_until_ms = 0
         self._stopped_at_ms = 0
 
         self._actions = []
-
         self._last_output_time_ms = None
+
         self._last_mouse_x = None
         self._last_mouse_y = None
         self._last_emitted_mouse_x = None
         self._last_emitted_mouse_y = None
-
         self._mouse_down = {}
+        self._scroll_burst = None
 
         self._text_buffer = ""
         self._text_start_time_ms = None
         self._text_last_time_ms = None
+        self._skipped_text_char_count = 0
+        self._skipped_key_count = 0
 
         self._pressed_modifiers = set()
         self._hotkey_down_keys = set()
@@ -332,7 +334,6 @@ class HAInputBridgeRecorder:
         for left, top, right, bottom in self._ignore_rects:
             if left <= x <= right and top <= y <= bottom:
                 return True
-
         return False
 
     def _should_ignore_locked(self, event_time_ms: int) -> bool:
@@ -355,12 +356,10 @@ class HAInputBridgeRecorder:
             return
 
         delay_ms = action_time_ms - self._last_output_time_ms
-
         if delay_ms < MIN_DELAY_MS:
             return
 
         rounded = self._round_delay_ms(delay_ms)
-
         if rounded < MIN_DELAY_MS:
             return
 
@@ -379,15 +378,16 @@ class HAInputBridgeRecorder:
         output_end_time_ms: int | None = None,
     ) -> None:
         self._emit_delay_if_needed_locked(action_time_ms)
-
         normalized = dict(action)
         normalized["_time_ms"] = action_time_ms
         self._actions.append(normalized)
-
         self._last_output_time_ms = output_end_time_ms or action_time_ms
 
     def _distance(self, x1: int, y1: int, x2: int, y2: int) -> float:
         return math.hypot(x2 - x1, y2 - y1)
+
+    def _clamp_scroll_amount(self, amount: int) -> int:
+        return max(-MAX_SCROLL_AMOUNT, min(MAX_SCROLL_AMOUNT, int(amount)))
 
     def _emit_move_locked(
         self,
@@ -411,7 +411,6 @@ class HAInputBridgeRecorder:
                 "y": int(y),
             },
         )
-
         self._last_emitted_mouse_x = int(x)
         self._last_emitted_mouse_y = int(y)
 
@@ -423,13 +422,12 @@ class HAInputBridgeRecorder:
         button: str,
     ) -> None:
         self._flush_text_locked(action_time_ms)
+        self._flush_scroll_burst_locked(action_time_ms)
 
         last_index = self._find_last_non_delay_action_index_locked()
-
         if last_index is not None:
             previous = self._actions[last_index]
             previous_time = int(previous.get("_time_ms", 0))
-
             if (
                 previous.get("type") == "click"
                 and previous.get("button") == button
@@ -449,7 +447,6 @@ class HAInputBridgeRecorder:
                 return
 
         self._emit_move_locked(action_time_ms, x, y)
-
         self._emit_action_locked(
             action_time_ms,
             {
@@ -465,16 +462,13 @@ class HAInputBridgeRecorder:
         for index in range(len(self._actions) - 1, -1, -1):
             if self._actions[index].get("type") != "delay":
                 return index
-
         return None
 
     def _on_mouse_move(self, x: int, y: int) -> None:
         event_time_ms = self._now_ms()
-
         with self._lock:
             x = int(x)
             y = int(y)
-
             if self._should_ignore_mouse_locked(event_time_ms, x, y):
                 return
 
@@ -487,14 +481,12 @@ class HAInputBridgeRecorder:
     def _on_mouse_click(self, x: int, y: int, button: mouse.Button, pressed: bool) -> None:
         event_time_ms = self._now_ms()
         mapped_button = MOUSE_BUTTON_MAP.get(button)
-
         if not mapped_button:
             return
 
         with self._lock:
             x = int(x)
             y = int(y)
-
             if self._should_ignore_mouse_locked(event_time_ms, x, y):
                 return
 
@@ -503,6 +495,7 @@ class HAInputBridgeRecorder:
 
             if pressed:
                 self._flush_text_locked(event_time_ms)
+                self._flush_scroll_burst_locked(event_time_ms)
                 self._mouse_down[mapped_button] = MouseDownState(
                     button=mapped_button,
                     x=x,
@@ -512,9 +505,9 @@ class HAInputBridgeRecorder:
                 return
 
             state = self._mouse_down.pop(mapped_button, None)
-
             if state is None:
                 self._flush_text_locked(event_time_ms)
+                self._flush_scroll_burst_locked(event_time_ms)
                 self._emit_move_locked(event_time_ms, x, y)
                 self._emit_action_locked(
                     event_time_ms,
@@ -527,7 +520,6 @@ class HAInputBridgeRecorder:
 
             duration_ms = event_time_ms - state.time_ms
             movement_px = self._distance(state.x, state.y, x, y)
-
             if (
                 not state.emitted_down
                 and duration_ms <= CLICK_MAX_MS
@@ -538,6 +530,7 @@ class HAInputBridgeRecorder:
 
             if not state.emitted_down:
                 self._flush_text_locked(state.time_ms)
+                self._flush_scroll_burst_locked(state.time_ms)
                 self._emit_move_locked(state.time_ms, state.x, state.y, force=True)
                 self._emit_action_locked(
                     state.time_ms,
@@ -572,6 +565,7 @@ class HAInputBridgeRecorder:
             and movement_from_start >= DRAG_START_MIN_DISTANCE_PX
         ):
             self._flush_text_locked(state.time_ms)
+            self._flush_scroll_burst_locked(state.time_ms)
             self._emit_move_locked(state.time_ms, state.x, state.y, force=True)
             self._emit_action_locked(
                 state.time_ms,
@@ -607,50 +601,96 @@ class HAInputBridgeRecorder:
             return
 
         self._emit_move_locked(event_time_ms, x, y, force=True)
-
         state.last_drag_move_x = x
         state.last_drag_move_y = y
         state.last_drag_move_time_ms = event_time_ms
 
     def _on_mouse_scroll(self, x: int, y: int, dx: int, dy: int) -> None:
         event_time_ms = self._now_ms()
-
         with self._lock:
             x = int(x)
             y = int(y)
-
             if self._should_ignore_mouse_locked(event_time_ms, x, y):
                 return
 
             self._last_mouse_x = x
             self._last_mouse_y = y
-
             self._flush_text_locked(event_time_ms)
-            self._emit_move_locked(event_time_ms, x, y)
 
-            amount = int(dy * SCROLL_MULTIPLIER)
-            amount = max(-MAX_SCROLL_AMOUNT, min(MAX_SCROLL_AMOUNT, amount))
-
+            amount = self._clamp_scroll_amount(int(dy * SCROLL_MULTIPLIER))
             if amount == 0:
                 return
 
-            self._emit_action_locked(
-                event_time_ms,
-                {
-                    "type": "scroll",
-                    "amount": amount,
-                },
+            self._append_scroll_burst_locked(event_time_ms, x, y, amount)
+
+    def _append_scroll_burst_locked(
+        self,
+        event_time_ms: int,
+        x: int,
+        y: int,
+        amount: int,
+    ) -> None:
+        burst = self._scroll_burst
+        if burst is None:
+            self._scroll_burst = ScrollBurstState(
+                x=x,
+                y=y,
+                start_time_ms=event_time_ms,
+                last_time_ms=event_time_ms,
+                amount=amount,
             )
+            return
+
+        gap_ms = event_time_ms - burst.last_time_ms
+        distance_px = self._distance(burst.x, burst.y, x, y)
+        same_direction = (burst.amount >= 0 and amount >= 0) or (burst.amount <= 0 and amount <= 0)
+        same_burst = (
+            gap_ms <= SCROLL_BURST_MAX_GAP_MS
+            and distance_px <= SCROLL_BURST_MOVE_TOLERANCE_PX
+            and same_direction
+        )
+
+        if not same_burst:
+            self._flush_scroll_burst_locked(event_time_ms)
+            self._scroll_burst = ScrollBurstState(
+                x=x,
+                y=y,
+                start_time_ms=event_time_ms,
+                last_time_ms=event_time_ms,
+                amount=amount,
+            )
+            return
+
+        burst.last_time_ms = event_time_ms
+        burst.amount = self._clamp_scroll_amount(burst.amount + amount)
+
+    def _flush_scroll_burst_locked(self, fallback_time_ms: int) -> None:
+        burst = self._scroll_burst
+        if burst is None:
+            return
+
+        self._scroll_burst = None
+        amount = self._clamp_scroll_amount(burst.amount)
+        if amount == 0:
+            return
+
+        self._emit_move_locked(burst.start_time_ms, burst.x, burst.y)
+        self._emit_action_locked(
+            burst.start_time_ms,
+            {
+                "type": "scroll",
+                "amount": amount,
+            },
+            output_end_time_ms=burst.last_time_ms,
+        )
 
     def _on_key_press(self, key: keyboard.Key | keyboard.KeyCode | None) -> None:
         event_time_ms = self._now_ms()
-
         with self._lock:
             if self._should_ignore_locked(event_time_ms):
                 return
 
             modifier = MODIFIER_KEY_MAP.get(key)
-
             if modifier:
                 self._pressed_modifiers.add(modifier)
                 return
@@ -659,14 +699,18 @@ class HAInputBridgeRecorder:
             printable = self._keyboard_printable_char(key)
 
             if self._pressed_modifiers and key_name:
+                if not self._is_safe_hotkey_key_name(key_name):
+                    self._skipped_key_count += 1
+                    return
+
                 combo = self._normalized_hotkey_keys(key_name)
                 combo_key = "+".join(combo)
-
                 if combo_key in self._hotkey_down_keys:
                     return
 
                 self._hotkey_down_keys.add(combo_key)
                 self._flush_text_locked(event_time_ms)
+                self._flush_scroll_burst_locked(event_time_ms)
                 self._emit_action_locked(
                     event_time_ms,
                     {
@@ -682,6 +726,7 @@ class HAInputBridgeRecorder:
 
             if key_name:
                 self._flush_text_locked(event_time_ms)
+                self._flush_scroll_burst_locked(event_time_ms)
                 self._emit_action_locked(
                     event_time_ms,
                     {
@@ -689,16 +734,17 @@ class HAInputBridgeRecorder:
                         "key": key_name,
                     },
                 )
+                return
+
+            self._skipped_key_count += 1
 
     def _on_key_release(self, key: keyboard.Key | keyboard.KeyCode | None) -> None:
         with self._lock:
             modifier = MODIFIER_KEY_MAP.get(key)
-
             if modifier:
                 self._pressed_modifiers.discard(modifier)
-
-                if not self._pressed_modifiers:
-                    self._hotkey_down_keys.clear()
+            if not self._pressed_modifiers:
+                self._hotkey_down_keys.clear()
 
     def _keyboard_key_name(self, key: keyboard.Key | keyboard.KeyCode | None) -> str | None:
         if key is None:
@@ -713,7 +759,9 @@ class HAInputBridgeRecorder:
             char = None
 
         if isinstance(char, str) and len(char) == 1:
-            return char.lower()
+            normalized = self._sanitize_text_char(char)
+            if normalized is not None:
+                return normalized.lower()
 
         return None
 
@@ -732,17 +780,48 @@ class HAInputBridgeRecorder:
         except Exception:
             return None
 
-        if isinstance(char, str) and len(char) == 1 and char.isprintable():
-            return char
+        if not isinstance(char, str) or len(char) != 1:
+            return None
 
-        return None
+        sanitized = self._sanitize_text_char(char)
+        if sanitized is None:
+            self._skipped_text_char_count += 1
+            return None
+
+        return sanitized
+
+    def _sanitize_text_char(self, char: str) -> str | None:
+        if not isinstance(char, str) or len(char) != 1:
+            return None
+
+        if char in {"\r", "\n", "\t"}:
+            return None
+
+        if not char.isprintable():
+            return None
+
+        category = unicodedata.category(char)
+        if category.startswith("C"):
+            return None
+
+        if ord(char) > 0xFFFF:
+            return None
+
+        return char
+
+    def _is_safe_hotkey_key_name(self, key_name: str) -> bool:
+        if not key_name:
+            return False
+        if key_name in SPECIAL_KEY_MAP.values():
+            return True
+        if len(key_name) == 1 and key_name.lower() in SAFE_HOTKEY_NAME_CHARS:
+            return True
+        return all(char in SAFE_HOTKEY_NAME_CHARS for char in key_name.lower())
 
     def _normalized_hotkey_keys(self, key_name: str) -> list[str]:
         keys = [modifier for modifier in MODIFIER_ORDER if modifier in self._pressed_modifiers]
-
         if key_name not in keys:
             keys.append(key_name)
-
         return keys
 
     def _append_text_locked(self, event_time_ms: int, char: str) -> None:
@@ -754,6 +833,7 @@ class HAInputBridgeRecorder:
             self._flush_text_locked(event_time_ms)
 
         if not self._text_buffer:
+            self._flush_scroll_burst_locked(event_time_ms)
             self._text_start_time_ms = event_time_ms
 
         self._text_buffer += char
@@ -784,6 +864,7 @@ class HAInputBridgeRecorder:
     def _finalize_open_mouse_buttons_locked(self, event_time_ms: int) -> None:
         for button, state in list(self._mouse_down.items()):
             if not state.emitted_down:
+                self._flush_scroll_burst_locked(state.time_ms)
                 self._emit_move_locked(state.time_ms, state.x, state.y, force=True)
                 self._emit_action_locked(
                     state.time_ms,
@@ -805,17 +886,14 @@ class HAInputBridgeRecorder:
 
     def _save_yaml_locked(self, yaml_text: str) -> Path:
         self.recordings_dir.mkdir(parents=True, exist_ok=True)
-
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         path = self.recordings_dir / f"recording-{stamp}.yaml"
         path.write_text(yaml_text, encoding="utf-8")
-
         return path
 
     def _recording_duration_ms_locked(self) -> int:
         if not self._started_at_ms:
             return 0
-
         end = self._stopped_at_ms or self._now_ms()
         return max(0, end - self._started_at_ms - max(0, self.start_ignore_ms))
 
@@ -824,6 +902,7 @@ class HAInputBridgeRecorder:
         return max(30, min(120, duration_seconds + 10))
 
     def _build_yaml_locked(self) -> str:
+        self._flush_scroll_burst_locked(self._stopped_at_ms or self._now_ms())
         actions = [
             action
             for action in self._actions
@@ -832,10 +911,17 @@ class HAInputBridgeRecorder:
         arm_seconds = self._arm_seconds_locked()
 
         lines: list[str] = []
-
         lines.append("# Recorded by HA Input Bridge")
         lines.append("# Review before running.")
         lines.append("# Coordinates depend on your Windows display layout.")
+        lines.append("# Playback should stop if Windows-side cancellation is enabled and the user intervenes.")
+
+        if self._skipped_text_char_count:
+            lines.append(
+                f"# Recorder warning: skipped {self._skipped_text_char_count} unsupported text character(s)."
+            )
+        if self._skipped_key_count:
+            lines.append(f"# Recorder warning: skipped {self._skipped_key_count} unsupported key event(s).")
 
         if self.virtual_desktop:
             left = self.virtual_desktop.get("left")
@@ -844,7 +930,6 @@ class HAInputBridgeRecorder:
             bottom = self.virtual_desktop.get("bottom")
             width = self.virtual_desktop.get("width")
             height = self.virtual_desktop.get("height")
-
             lines.append(
                 f"# Virtual desktop: left={left} top={top} right={right} bottom={bottom} width={width} height={height}"
             )
@@ -852,7 +937,6 @@ class HAInputBridgeRecorder:
         lines.append("")
         lines.append(f"alias: {self._yaml_scalar(self.alias)}")
         lines.append("sequence:")
-
         lines.extend(
             [
                 "  - action: ha_input_bridge.arm",
@@ -892,7 +976,7 @@ class HAInputBridgeRecorder:
                         "",
                         "  - action: ha_input_bridge.click",
                         "    data:",
-                        f"      button: {action['button']}",
+                        f"      button: {self._yaml_bare_word(str(action['button']))}",
                         f"      clicks: {int(action.get('clicks', 1))}",
                     ]
                 )
@@ -904,7 +988,7 @@ class HAInputBridgeRecorder:
                         "",
                         "  - action: ha_input_bridge.mouse_down",
                         "    data:",
-                        f"      button: {action['button']}",
+                        f"      button: {self._yaml_bare_word(str(action['button']))}",
                     ]
                 )
                 continue
@@ -915,7 +999,7 @@ class HAInputBridgeRecorder:
                         "",
                         "  - action: ha_input_bridge.mouse_up",
                         "    data:",
-                        f"      button: {action['button']}",
+                        f"      button: {self._yaml_bare_word(str(action['button']))}",
                     ]
                 )
                 continue
@@ -949,7 +1033,7 @@ class HAInputBridgeRecorder:
                         "",
                         "  - action: ha_input_bridge.press",
                         "    data:",
-                        f"      key: {action['key']}",
+                        f"      key: {self._yaml_bare_word(str(action['key']))}",
                     ]
                 )
                 continue
@@ -963,10 +1047,8 @@ class HAInputBridgeRecorder:
                         "      keys:",
                     ]
                 )
-
                 for key in action.get("keys", []):
-                    lines.append(f"        - {key}")
-
+                    lines.append(f"        - {self._yaml_bare_word(str(key))}")
                 continue
 
         lines.extend(
@@ -979,8 +1061,13 @@ class HAInputBridgeRecorder:
                 "",
             ]
         )
-
         return "\n".join(lines)
 
     def _yaml_scalar(self, value: str) -> str:
-        return json.dumps(value, ensure_ascii=False)
+        return json.dumps(value, ensure_ascii=True)
+
+    def _yaml_bare_word(self, value: str) -> str:
+        value = value.strip().lower()
+        if value and all(char in SAFE_HOTKEY_NAME_CHARS for char in value):
+            return value
+        return self._yaml_scalar(value)
