@@ -19,9 +19,7 @@ HA Input Bridge has two parts.
 
 ### 1. Windows app
 
-The Windows app runs in the background on your PC.
-
-It receives secure input commands from Home Assistant and turns them into:
+The Windows app runs in the background on your PC. It receives secure input commands from Home Assistant and turns them into:
 
 - mouse movement
 - left/right/middle click
@@ -32,28 +30,28 @@ It receives secure input commands from Home Assistant and turns them into:
 
 It supports normal Windows extended display setups, including multiple monitors where one display uses negative desktop coordinates.
 
-The Windows app also adds a tray icon so you can:
+The Windows app also adds a tray icon and Control Center so you can:
 
 - see if the bridge is running
+- see playback state
+- cancel active playback
+- release stuck mouse buttons
 - see live mouse coordinates
 - copy mouse coordinates
 - copy a ready-to-use Home Assistant move action
 - record mouse actions into Home Assistant script YAML
 - record mouse + keyboard actions into Home Assistant script YAML
 - open saved recordings
-- start or stop the bridge
-- restart the bridge
+- start, stop, or restart the bridge
 - copy setup info
-- release stuck mouse buttons
-- open settings
 - open logs
+- open diagnostics
+- change playback safety settings
 - uninstall the app
 
 ### 2. Home Assistant integration
 
-The Home Assistant integration connects to the Windows app.
-
-After setup, Home Assistant can send commands to the Windows PC through:
+The Home Assistant integration connects to the Windows app. After setup, Home Assistant can send commands to the Windows PC through:
 
 - the bundled trackpad UI
 - Home Assistant actions
@@ -72,10 +70,12 @@ It uses:
 - a private token
 - Windows Firewall
 - a temporary arm window before input commands are accepted
+- playback cancellation when the Windows user manually moves the mouse
 - bounded request sizes
 - bounded mouse, scroll, and text input values
-- explicit mouse button release actions
+- explicit mouse button down/up actions
 - a release-all safety action for stuck mouse buttons
+- local recorder YAML storage
 
 The token is required for Home Assistant to connect.
 
@@ -136,6 +136,7 @@ The installer automatically:
 - creates the Windows scheduled task
 - creates the Windows Firewall rule
 - creates the recordings folder
+- enables playback safety defaults
 - starts the bridge
 - starts the tray icon
 
@@ -159,25 +160,20 @@ HA Input Bridge
 
 Right-click the tray icon.
 
-You should see menu items like:
+You should see a grouped menu like:
 
 ```text
 Status: running
 Mouse: x=500, y=300
-Settings...
-Show mouse coordinates
-Copy mouse coordinates
-Start recording: mouse only
-Start recording: mouse + keyboard
-Open recordings folder
+
+Open Control Center
 Copy setup info
-Release stuck mouse buttons
-Start bridge
-Stop bridge
-Restart bridge
-Open connection info
-Open logs folder
-Open install folder
+
+Playback
+Recorder
+Bridge
+Diagnostics
+
 Uninstall HA Input Bridge
 Exit tray icon
 ```
@@ -194,20 +190,21 @@ The menu should show:
 Status: running
 ```
 
-You can also open:
+Open:
 
 ```text
-Settings...
+Open Control Center
 ```
 
-The Basic tab should show:
+The Overview tab should show:
 
 ```text
 Status: running
 Mouse: x=..., y=...
 Windows bridge host: 192.168.x.x
+Other host values: ...
 Port: 8765
-Listening mode: Automatic - all local network adapters
+Playback: active=false, armed=false, cancelled=false
 ```
 
 The exact IP address depends on your Windows PC.
@@ -242,13 +239,27 @@ This copies the Windows connection details to your clipboard.
 It looks like this:
 
 ```text
-HA Input Bridge
+HA Input Bridge setup info
+
+Use these values in Home Assistant:
+
 Host: 192.168.2.2
 Port: 8765
 Token: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+Other host values: 100.98.112.92
+Bridge bind address: 0.0.0.0
+Firewall remote address: LocalSubnet
+
+Playback safety:
+Cancel on manual mouse movement: True
+Manual mouse cancel threshold px: 8
+Manual mouse grace ms: 250
+
+Keep this token private.
 ```
 
-You will paste this into Home Assistant later.
+You will paste the host, port, and token into Home Assistant later.
 
 ---
 
@@ -261,8 +272,7 @@ Open Home Assistant.
 Go to:
 
 ```text
-HACS
-→ Integrations
+HACS → Integrations
 ```
 
 Search for:
@@ -282,9 +292,7 @@ After installation, restart Home Assistant if HACS asks you to restart.
 In Home Assistant, go to:
 
 ```text
-Settings
-→ Devices & services
-→ Add integration
+Settings → Devices & services → Add integration
 ```
 
 Search for:
@@ -301,12 +309,11 @@ Click it.
 
 Home Assistant will show a setup form.
 
-Paste the setup info copied from the Windows tray icon.
+Use the setup info copied from the Windows tray icon.
 
 Example:
 
 ```text
-HA Input Bridge
 Host: 192.168.2.2
 Port: 8765
 Token: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
@@ -340,6 +347,8 @@ Test:
 - two-finger scroll
 - two-finger right click
 - three-finger middle click
+- Cancel playback
+- Release mouse
 - keyboard input if available
 
 If you use multiple monitors, test that the cursor can move across all extended displays.
@@ -368,47 +377,85 @@ The tray icon is the control center for the Windows side.
 Right-click the tray icon to access:
 
 ```text
-Settings...
-Show mouse coordinates
-Copy mouse coordinates
-Start recording: mouse only
-Start recording: mouse + keyboard
-Open recordings folder
+Status: running
+Mouse: x=..., y=...
+
+Open Control Center
 Copy setup info
-Release stuck mouse buttons
-Start bridge
-Stop bridge
-Restart bridge
-Open connection info
-Open logs folder
-Open install folder
+
+Playback
+  Cancel active playback
+  Release stuck mouse buttons
+  Show mouse coordinates
+  Copy mouse coordinates
+
+Recorder
+  Start mouse recording
+  Start mouse + keyboard recording
+  Open recordings folder
+
+Bridge
+  Start bridge
+  Stop bridge
+  Restart bridge
+
+Diagnostics
+  Open connection info
+  Open logs folder
+  Open install folder
+
 Uninstall HA Input Bridge
 Exit tray icon
 ```
 
-The tray context menu also shows:
+The top-level menu is intentionally short.
 
-```text
-Status: running
-Mouse: x=..., y=...
-```
-
-The mouse coordinates and recorder are useful when writing Home Assistant scripts and automations.
+Detailed controls are inside the Control Center.
 
 ---
 
-## Settings — Basic tab
+# Windows Control Center
 
-The Basic tab is for normal users.
+Open it from:
 
-It shows:
+```text
+Right-click tray icon → Open Control Center
+```
+
+The Control Center has these tabs:
+
+```text
+Overview
+Setup
+Playback Safety
+Recorder
+Diagnostics
+Advanced
+```
+
+---
+
+## Overview tab
+
+The Overview tab shows:
 
 - bridge status
-- current mouse coordinates
-- Windows bridge host
-- alternative host values
+- mouse coordinates
+- playback state
+- recommended Windows bridge host
+- other host values
 - port
+
+Use this tab first when checking whether the Windows side is healthy.
+
+---
+
+## Setup tab
+
+The Setup tab contains:
+
 - token
+- token show/hide
 - start bridge on Windows login
 - start tray icon on Windows login
 
@@ -432,7 +479,64 @@ to hide it again.
 
 ---
 
-## Settings — Advanced tab
+## Playback Safety tab
+
+The Playback Safety tab controls whether active playback is cancelled when the Windows user manually moves the physical mouse.
+
+Default settings:
+
+```text
+Cancel on manual mouse movement: enabled
+Manual mouse threshold: 8 px
+Grace period after synthetic movement: 250 ms
+```
+
+Meaning:
+
+- if Home Assistant is running a recorded script
+- and the Windows user physically moves the mouse
+- and the mouse moves more than the threshold
+- the Windows agent cancels playback
+- releases mouse buttons
+- returns an error to Home Assistant
+- Home Assistant stops the remaining script actions
+
+Do not add `continue_on_error: true` to generated recorder YAML unless you intentionally want to disable this stop-on-cancel behavior.
+
+---
+
+## Recorder tab
+
+The Recorder tab contains:
+
+- Start mouse recording
+- Start mouse + keyboard recording
+- Open recordings folder
+
+Mouse-only recording is safer.
+
+Mouse + keyboard recording is opt-in because it can capture private text.
+
+---
+
+## Diagnostics tab
+
+The Diagnostics tab contains:
+
+- Refresh status
+- Show mouse coordinates
+- Copy mouse coordinates
+- Cancel active playback
+- Release mouse buttons
+- Open logs
+- Open connection info
+- Open install folder
+
+Use this tab for troubleshooting.
+
+---
+
+## Advanced tab
 
 The Advanced tab is for network troubleshooting.
 
@@ -441,6 +545,7 @@ It contains:
 ```text
 Bind address
 Allowed Home Assistant IP
+Firewall remote address
 Bridge port
 ```
 
@@ -449,6 +554,7 @@ Default values:
 ```text
 Bind address: 0.0.0.0
 Allowed Home Assistant IP: empty
+Firewall remote address: LocalSubnet
 Bridge port: 8765
 ```
 
@@ -521,7 +627,13 @@ Use:
 
 only if Home Assistant reaches the Windows PC through Tailscale.
 
-Most users should not need to choose manually. Use **Copy setup info**.
+Most users should not need to choose manually.
+
+Use:
+
+```text
+Copy setup info
+```
 
 ---
 
@@ -532,7 +644,7 @@ The Windows tray app can show and copy the current mouse coordinates.
 Right-click the Windows tray icon and use:
 
 ```text
-Show mouse coordinates
+Playback → Show mouse coordinates
 ```
 
 This opens a small always-on-top window with:
@@ -547,17 +659,10 @@ This opens a small always-on-top window with:
 You can also right-click the tray icon and use:
 
 ```text
-Copy mouse coordinates
+Playback → Copy mouse coordinates
 ```
 
-This copies:
-
-```yaml
-x: 500
-y: 300
-```
-
-The coordinate window can also copy a ready-to-use Home Assistant action:
+This copies a ready-to-use Home Assistant move action:
 
 ```yaml
 - action: ha_input_bridge.arm
@@ -590,6 +695,7 @@ The recorder can record:
 - text typing
 - special keys
 - hotkeys
+- useful timing delays
 
 The generated YAML can be copied directly into a Home Assistant script.
 
@@ -604,8 +710,7 @@ There are two recorder modes.
 Use:
 
 ```text
-Right-click tray icon
-→ Start recording: mouse only
+Right-click tray icon → Recorder → Start mouse recording
 ```
 
 This records:
@@ -617,6 +722,7 @@ This records:
 - middle clicks
 - scroll
 - drag
+- timing delays
 
 It does not record keyboard input.
 
@@ -625,15 +731,25 @@ It does not record keyboard input.
 Use:
 
 ```text
-Right-click tray icon
-→ Start recording: mouse + keyboard
+Right-click tray icon → Recorder → Start mouse + keyboard recording
 ```
 
 This records mouse actions plus keyboard actions.
 
-Keyboard recording can capture sensitive text. Do not type passwords, tokens, private messages, recovery codes, or anything you would not want stored in YAML.
+Keyboard recording can capture sensitive text.
 
-Keyboard recording is opt-in. The app shows a warning before starting mouse + keyboard recording.
+Do not type:
+
+- passwords
+- tokens
+- private messages
+- recovery codes
+- payment details
+- anything you would not want stored in YAML
+
+Keyboard recording is opt-in.
+
+The app shows a warning before starting mouse + keyboard recording.
 
 ---
 
@@ -657,8 +773,7 @@ C:\ProgramData\HA Input Bridge\recordings
 You can open this folder from:
 
 ```text
-Right-click tray icon
-→ Open recordings folder
+Right-click tray icon → Recorder → Open recordings folder
 ```
 
 ---
@@ -673,6 +788,7 @@ Example:
 # Recorded by HA Input Bridge
 # Review before running.
 # Coordinates depend on your Windows display layout.
+# Playback should stop if Windows-side cancellation is enabled and the user intervenes.
 # Virtual desktop: left=-2560 top=0 right=2559 bottom=1439 width=5120 height=1440
 
 alias: "PC - Recorded input"
@@ -716,6 +832,14 @@ mode: single
 ```
 
 Paste this into a Home Assistant script.
+
+Do not add:
+
+```yaml
+continue_on_error: true
+```
+
+to recorder actions unless you intentionally want the script to continue after cancellation or bridge errors.
 
 ---
 
@@ -782,6 +906,50 @@ The final `release_all` is a safety step.
 
 ---
 
+## Scroll recording behavior
+
+Recorder scroll handling is optimized for playback accuracy.
+
+Live mouse wheel input often produces many small wheel events.
+
+The recorder combines nearby scroll events into scroll bursts.
+
+Instead of this:
+
+```yaml
+- action: ha_input_bridge.scroll
+  data:
+    amount: -10
+
+- action: ha_input_bridge.scroll
+  data:
+    amount: -10
+
+- action: ha_input_bridge.scroll
+  data:
+    amount: -10
+```
+
+the recorder should output this kind of action:
+
+```yaml
+- action: ha_input_bridge.scroll
+  data:
+    amount: -520
+```
+
+This is intentional.
+
+It makes playback closer to the original recorded scroll and avoids slow page movement that causes later clicks to land in the wrong place.
+
+Scroll values are bounded to:
+
+```text
+-2000 to 2000
+```
+
+---
+
 ## Keyboard recording behavior
 
 Normal typed text is bundled into `write`.
@@ -825,6 +993,30 @@ Example:
 
 ---
 
+## YAML text safety
+
+Recorder text output is sanitized.
+
+Unsupported text characters are skipped instead of being written raw into YAML.
+
+Text is JSON/YAML escaped.
+
+Example:
+
+```yaml
+text: "caf\u00e9"
+```
+
+If unsupported input was skipped, the generated YAML includes a warning comment like:
+
+```yaml
+# Recorder warning: skipped 2 unsupported text character(s).
+```
+
+This prevents invisible/control/unsupported characters from breaking Home Assistant YAML parsing.
+
+---
+
 ## Recorder safety
 
 The recorder does not save your token, host, or port.
@@ -840,6 +1032,53 @@ Recorder output may contain:
 Review generated YAML before using or sharing it.
 
 Do not share recordings that contain private text.
+
+---
+
+# Playback cancellation
+
+HA Input Bridge supports Windows-side playback cancellation.
+
+This is useful when a Home Assistant script or recorded YAML is running and the Windows user wants to interrupt it.
+
+Default behavior:
+
+1. Home Assistant arms the bridge.
+2. A script starts sending mouse/keyboard actions.
+3. The Windows agent tracks the expected mouse position.
+4. If the physical mouse moves outside the threshold, playback is cancelled.
+5. The agent releases mouse buttons.
+6. The next Home Assistant action fails.
+7. Home Assistant stops the remaining script sequence.
+
+Default safety values:
+
+```text
+cancel_on_manual_mouse: true
+manual_mouse_cancel_threshold_px: 8
+manual_mouse_grace_ms: 250
+```
+
+You can cancel playback manually from:
+
+```text
+Windows tray → Playback → Cancel active playback
+```
+
+or from the Home Assistant trackpad:
+
+```text
+Cancel playback
+```
+
+or with the Home Assistant action:
+
+```yaml
+- action: ha_input_bridge.cancel
+  data: {}
+```
+
+Do not add `continue_on_error: true` to normal recorder playback unless you want the script to continue after cancellation.
 
 ---
 
@@ -869,6 +1108,15 @@ Use long-press drag for:
 - dragging files
 - moving sliders
 - drawing selection boxes
+
+The trackpad also includes safety buttons:
+
+```text
+Cancel playback
+Release mouse
+State
+Position
+```
 
 ---
 
@@ -900,7 +1148,9 @@ This means Windows exposes one combined virtual desktop of `5120x1440`.
 
 The cursor should be able to move across all active extended displays.
 
-Recorded scripts depend on the display layout used during recording. If you change monitor layout, recorded coordinates may no longer match.
+Recorded scripts depend on the display layout used during recording.
+
+If you change monitor layout, recorded coordinates may no longer match.
 
 ---
 
@@ -915,10 +1165,19 @@ The Settings panel inside the Home Assistant trackpad card includes:
 - max mouse step
 - max scroll step
 - frame interval
-- long-press drag
 - haptic feedback
 - live typing
 - auto-open keyboard behavior
+
+Defaults:
+
+```text
+Mouse speed: 2.8x
+Frame interval: 12ms
+Max mouse step: 650px
+Scroll speed: 3.2x
+Max scroll step: 220
+```
 
 For smoother movement:
 
@@ -928,9 +1187,9 @@ Higher max mouse step = larger movement range per update
 Higher mouse speed = faster cursor movement
 ```
 
-Defaults are chosen to balance smoothness and reliability.
-
 If movement feels too fast or too slow, adjust Mouse speed first.
+
+If scroll feels too slow from the trackpad UI, increase Scroll speed or Max scroll step.
 
 ---
 
@@ -943,6 +1202,8 @@ Available actions:
 ```text
 ha_input_bridge.arm
 ha_input_bridge.position
+ha_input_bridge.state
+ha_input_bridge.cancel
 ha_input_bridge.move
 ha_input_bridge.move_relative
 ha_input_bridge.click
@@ -962,6 +1223,62 @@ Most input sequences should start with:
   data:
     seconds: 10
 ```
+
+---
+
+## Arm bridge
+
+```yaml
+- action: ha_input_bridge.arm
+  data:
+    seconds: 30
+    cancel_on_manual_mouse: true
+    manual_mouse_cancel_threshold_px: 8
+    manual_mouse_grace_ms: 250
+```
+
+Fields:
+
+```text
+seconds: how long input commands are accepted
+cancel_on_manual_mouse: cancel playback if the Windows user moves the mouse
+manual_mouse_cancel_threshold_px: movement threshold before cancellation
+manual_mouse_grace_ms: grace time after bridge-generated movement
+```
+
+---
+
+## Get bridge state
+
+```yaml
+alias: PC - Get bridge state
+sequence:
+  - action: ha_input_bridge.state
+    data: {}
+    response_variable: bridge_state
+
+  - action: persistent_notification.create
+    data:
+      title: "HA Input Bridge state"
+      message: >
+        active={{ bridge_state.playback_active }}
+        armed={{ bridge_state.armed }}
+        cancelled={{ bridge_state.cancelled }}
+        x={{ bridge_state.x }}
+        y={{ bridge_state.y }}
+mode: single
+```
+
+---
+
+## Cancel playback
+
+```yaml
+- action: ha_input_bridge.cancel
+  data: {}
+```
+
+This cancels active playback and releases mouse buttons.
 
 ---
 
@@ -1093,7 +1410,7 @@ Scroll up:
 
 - action: ha_input_bridge.scroll
   data:
-    amount: 30
+    amount: 360
 ```
 
 Scroll down:
@@ -1105,8 +1422,16 @@ Scroll down:
 
 - action: ha_input_bridge.scroll
   data:
-    amount: -30
+    amount: -360
 ```
+
+Allowed range:
+
+```text
+-2000 to 2000
+```
+
+Recorded YAML may use large scroll values because the recorder combines live wheel events into scroll bursts.
 
 ---
 
@@ -1218,6 +1543,9 @@ To update HA Input Bridge:
 1. Download the newest `HA-Input-Bridge-Setup.exe`.
 2. Run it.
 3. Install over the old version.
+4. Update or redownload the Home Assistant integration in HACS.
+5. Restart Home Assistant.
+6. Hard refresh the browser or clear the Home Assistant app frontend cache.
 
 The installer keeps existing settings where possible:
 
@@ -1225,6 +1553,7 @@ The installer keeps existing settings where possible:
 - port
 - startup settings
 - firewall settings
+- playback safety settings
 
 After updating, the bridge and tray app restart.
 
@@ -1237,11 +1566,12 @@ You normally do not need to re-add the Home Assistant integration after an updat
 To generate a new token:
 
 1. Right-click the Windows tray icon.
-2. Click `Settings...`.
-3. Click `Regenerate Token`.
-4. Click `Save & Restart Bridge`.
-5. Click `Copy Setup Info`.
-6. Reconfigure or re-add the integration in Home Assistant using the new setup info.
+2. Click `Open Control Center`.
+3. Go to the `Setup` tab.
+4. Click `Regenerate Token`.
+5. Click `Save & Restart Bridge`.
+6. Click `Copy Setup Info`.
+7. Reconfigure or re-add the integration in Home Assistant using the new setup info.
 
 Generate a new token if:
 
@@ -1257,17 +1587,13 @@ Generate a new token if:
 You can uninstall from Windows:
 
 ```text
-Windows Settings
-→ Apps
-→ HA Input Bridge
-→ Uninstall
+Windows Settings → Apps → HA Input Bridge → Uninstall
 ```
 
 Or from the tray icon:
 
 ```text
-Right-click tray icon
-→ Uninstall HA Input Bridge
+Right-click tray icon → Uninstall HA Input Bridge
 ```
 
 The uninstaller removes:
@@ -1286,10 +1612,7 @@ After uninstalling, Home Assistant can no longer connect to the Windows PC.
 You can also remove the integration from Home Assistant:
 
 ```text
-Settings
-→ Devices & services
-→ HA Input Bridge
-→ Delete
+Settings → Devices & services → HA Input Bridge → Delete
 ```
 
 ---
@@ -1301,8 +1624,7 @@ Settings
 On Windows:
 
 ```text
-Right-click tray icon
-→ Settings...
+Right-click tray icon → Open Control Center
 ```
 
 Check:
@@ -1314,7 +1636,7 @@ Status: running
 Then click:
 
 ```text
-Copy setup info
+Copy Setup Info
 ```
 
 In Home Assistant, remove and re-add the integration using the copied setup info.
@@ -1326,11 +1648,10 @@ In Home Assistant, remove and re-add the integration using the copied setup info
 Open:
 
 ```text
-Right-click tray icon
-→ Settings...
+Right-click tray icon → Open Control Center
 ```
 
-Check the Basic tab.
+Check the Overview tab.
 
 Usually the correct host is:
 
@@ -1355,8 +1676,7 @@ Status: running
 Then try:
 
 ```text
-Right-click tray icon
-→ Show mouse coordinates
+Right-click tray icon → Playback → Show mouse coordinates
 ```
 
 If it still shows unavailable:
@@ -1374,8 +1694,7 @@ Check that the tray app is running.
 Then try:
 
 ```text
-Right-click tray icon
-→ Start recording: mouse only
+Right-click tray icon → Recorder → Start mouse recording
 ```
 
 If the recorder window does not appear:
@@ -1403,11 +1722,46 @@ C:\ProgramData\HA Input Bridge\recordings
 
 ---
 
+## Generated YAML has unknown characters
+
+Update to v0.9.1 or newer.
+
+The recorder now sanitizes text and escapes YAML-safe strings.
+
+If unsupported characters are skipped, the generated YAML includes a warning comment.
+
+Do not manually paste invisible/control characters into recorder YAML.
+
+---
+
+## Recorder scrolls too slowly
+
+Update to v0.9.1 or newer.
+
+Older recorder output could generate many small scroll actions.
+
+v0.9.1 combines scroll wheel events into larger scroll bursts.
+
+Expected YAML example:
+
+```yaml
+- action: ha_input_bridge.scroll
+  data:
+    amount: -520
+```
+
+If scroll still feels too weak:
+
+1. Re-record the action with v0.9.1 or newer.
+2. Check that Home Assistant integration version is also v0.9.1 or newer.
+3. Check that `ha_input_bridge.scroll` accepts values up to `2000`.
+4. Increase the scroll amount manually if needed.
+
+---
+
 ## Generated YAML clicks the wrong place
 
-Recorded coordinates depend on the Windows display layout.
-
-If the script was recorded on a different monitor layout, coordinates may no longer match.
+Recorded coordinates depend on the Windows display layout and scroll position.
 
 Check:
 
@@ -1416,8 +1770,49 @@ Check:
 - resolution
 - scaling
 - extended display layout
+- browser zoom
+- page scroll state
+- whether playback was cancelled
 
 Use the coordinate viewer to verify current positions.
+
+For web pages, record from a known starting state.
+
+Example:
+
+- browser opened
+- page loaded
+- zoom unchanged
+- scroll at top
+- same monitor layout
+
+---
+
+## Playback does not cancel
+
+Check:
+
+```text
+Windows tray → Open Control Center → Playback Safety
+```
+
+Default should be:
+
+```text
+Cancel on manual mouse movement: enabled
+Manual mouse threshold: 8 px
+Grace period: 250 ms
+```
+
+Also check generated YAML.
+
+Do not use:
+
+```yaml
+continue_on_error: true
+```
+
+on bridge actions if you want cancellation to stop the script.
 
 ---
 
@@ -1432,7 +1827,11 @@ You can check the detected virtual desktop from PowerShell:
 ```powershell
 $config = Get-Content "$env:ProgramData\HA Input Bridge\config.json" | ConvertFrom-Json
 $headers = @{ "X-HA-Token" = $config.token }
-Invoke-RestMethod -Uri "http://127.0.0.1:8765/position" -Headers $headers -Method Get |
+
+Invoke-RestMethod `
+  -Uri "http://127.0.0.1:8765/position" `
+  -Headers $headers `
+  -Method Get |
   ConvertTo-Json -Depth 5
 ```
 
@@ -1459,11 +1858,13 @@ Long-press drag only starts if one finger stays mostly still for a short delay.
 
 If you move immediately, HA Input Bridge treats it as normal cursor movement.
 
-Check the trackpad settings and make sure:
+Expected behavior:
 
-```text
-Long-press drag: enabled
-```
+1. Put one finger down.
+2. Hold mostly still for about half a second.
+3. Wait for drag feedback.
+4. Move finger.
+5. Release finger to release the mouse button.
 
 Drag mode is cancelled if the finger moves too much before the long-press delay finishes.
 
@@ -1476,16 +1877,13 @@ Use either recovery option.
 From Home Assistant:
 
 ```text
-Home Assistant trackpad
-→ Quick keys
-→ Release mouse
+Home Assistant trackpad → Release mouse
 ```
 
-Or from Windows:
+From Windows:
 
 ```text
-Windows tray icon
-→ Release stuck mouse buttons
+Windows tray icon → Playback → Release stuck mouse buttons
 ```
 
 This releases left, right, and middle mouse buttons.
@@ -1502,6 +1900,8 @@ Check:
 4. Token matches.
 5. Windows Firewall allows the local subnet or Home Assistant IP.
 6. Home Assistant and Windows are on the same network.
+7. HACS integration version matches the Windows installer version.
+8. Browser/app frontend cache has been refreshed.
 
 ---
 
@@ -1536,9 +1936,7 @@ Check hidden tray icons first.
 If it is not there:
 
 ```text
-Start Menu
-→ HA Input Bridge
-→ HA Input Bridge Tray
+Start Menu → HA Input Bridge → HA Input Bridge Tray
 ```
 
 If the bridge is still running, only the tray icon may be closed.
@@ -1550,10 +1948,10 @@ If the bridge is still running, only the tray icon may be closed.
 Right-click the tray icon and click:
 
 ```text
-Start bridge
+Bridge → Start bridge
 ```
 
-Or open Settings and check:
+Or open Control Center and check:
 
 ```text
 Start bridge on Windows login
@@ -1566,8 +1964,7 @@ Start bridge on Windows login
 Open logs from the tray icon:
 
 ```text
-Right-click tray icon
-→ Open logs folder
+Right-click tray icon → Diagnostics → Open logs folder
 ```
 
 Important files:
@@ -1586,8 +1983,7 @@ Logs are rotated to limit disk growth.
 Open recordings from the tray icon:
 
 ```text
-Right-click tray icon
-→ Open recordings folder
+Right-click tray icon → Recorder → Open recordings folder
 ```
 
 Recordings are stored here:
@@ -1612,6 +2008,7 @@ HA Input Bridge includes several hardening measures:
 - bounded mouse movement values
 - bounded scroll values
 - bounded text input length
+- playback cancellation on manual mouse intervention
 - explicit mouse down/up actions
 - release-all mouse safety action
 - tray panic action for stuck mouse buttons
@@ -1623,6 +2020,8 @@ HA Input Bridge includes several hardening measures:
 - coordinate viewer single-instance handling
 - recorder window single-instance handling
 - recorder warning before keyboard capture
+- recorder YAML text sanitizing
+- recorder scroll-burst coalescing
 - recorder local-only YAML storage
 
 These controls reduce risk and resource growth.
@@ -1663,6 +2062,29 @@ Recorder core:
 windows/ha_input_bridge_recorder.py
 ```
 
+Important Windows files:
+
+```text
+windows/ha_input_bridge.py
+windows/ha_input_bridge_tray.py
+windows/ha_input_bridge_recorder.py
+windows/installer/build.ps1
+windows/installer/ha-input-bridge-agent.spec
+windows/installer/ha-input-bridge-tray.spec
+windows/installer/HAInputBridgeSetup.iss
+```
+
+Important Home Assistant files:
+
+```text
+custom_components/ha_input_bridge/__init__.py
+custom_components/ha_input_bridge/api.py
+custom_components/ha_input_bridge/services.yaml
+custom_components/ha_input_bridge/manifest.json
+custom_components/ha_input_bridge/www/pc-trackpad-card.js
+custom_components/ha_input_bridge/www/pc-trackpad-panel.js
+```
+
 The Windows installer is built with GitHub Actions.
 
 ---
@@ -1672,38 +2094,83 @@ The Windows installer is built with GitHub Actions.
 Before publishing a release:
 
 ```text
-1. Windows installer workflow is green
-2. Fresh Windows install works
-3. Tray process count is correct
-4. Settings process count is correct
-5. Coordinate viewer process count is correct
-6. Recorder process count is correct
-7. Copy setup info works
-8. Copy mouse coordinates works
-9. Show mouse coordinates works
-10. Copy HA move action works
-11. Mouse-only recorder works
-12. Mouse + keyboard recorder shows privacy warning
-13. Mouse + keyboard recorder writes text as ha_input_bridge.write
-14. Recorder detects hotkeys
-15. Recorder detects drag
-16. Recorder saves YAML to recordings folder
-17. Recorder copies YAML to clipboard
-18. Generated YAML runs in Home Assistant
-19. Home Assistant setup accepts pasted setup info
-20. Trackpad works
-21. Long-press drag works
-22. Release mouse safety action works
-23. Multi-monitor cursor movement works
-24. Windows logs rotate
-25. Home Assistant logs show no HA Input Bridge errors
-26. README is updated
-27. SECURITY.md is updated
-28. manifest.json version matches release tag
-29. Windows installer version matches release tag
-30. Tag is created
-31. GitHub Release includes the Windows installer
+1. main branch contains the intended latest version
+2. manifest.json version matches release tag
+3. HAInputBridgeSetup.iss version matches release tag
+4. README is updated
+5. SECURITY.md is updated
+6. Windows installer workflow is green
+7. Fresh Windows install works
+8. Update install over previous version works
+9. Tray process count is correct
+10. Settings/Control Center process count is correct
+11. Coordinate viewer process count is correct
+12. Recorder process count is correct
+13. Copy setup info works
+14. Copy mouse coordinates works
+15. Show mouse coordinates works
+16. Copy HA move action works
+17. Cancel active playback works
+18. Release mouse safety action works
+19. Mouse-only recorder works
+20. Mouse + keyboard recorder shows privacy warning
+21. Mouse + keyboard recorder writes text as ha_input_bridge.write
+22. Recorder sanitizes unsupported characters
+23. Recorder detects hotkeys
+24. Recorder detects drag
+25. Recorder coalesces scroll bursts
+26. Recorder saves YAML to recordings folder
+27. Recorder copies YAML to clipboard
+28. Generated YAML runs in Home Assistant
+29. Generated YAML stops when user manually moves mouse during playback
+30. Home Assistant setup accepts pasted setup info
+31. Home Assistant state action works
+32. Home Assistant cancel action works
+33. Trackpad works
+34. Trackpad Cancel playback works
+35. Long-press drag works
+36. Multi-monitor cursor movement works
+37. Windows logs rotate
+38. Home Assistant logs show no HA Input Bridge errors
+39. HACS sees the new version after GitHub Release
+40. Tag is created
+41. GitHub Release includes only the Windows installer asset
 ```
+
+---
+
+# v0.9.1 highlights
+
+v0.9.1 focuses on safety, recorder reliability, and Windows usability.
+
+Added:
+
+- playback cancellation when the Windows user manually moves the mouse
+- Windows `/state` endpoint
+- Windows `/cancel` endpoint
+- Home Assistant `ha_input_bridge.state`
+- Home Assistant `ha_input_bridge.cancel`
+- tray menu `Playback → Cancel active playback`
+- Control Center Playback Safety tab
+- configurable manual mouse cancellation threshold
+- configurable manual mouse grace period
+
+Changed:
+
+- recorder scroll events are coalesced into stronger scroll bursts
+- recorder YAML text output is sanitized and escaped
+- scroll range increased to `-2000..2000`
+- Windows tray menu is grouped by task
+- settings window is now a Control Center
+- trackpad includes Cancel playback, Release mouse, State, and Position controls
+- build script verifies recorder dependencies before packaging
+
+Fixed:
+
+- slow recorder scroll playback causing later clicks to land in the wrong place
+- invalid or invisible characters breaking generated Home Assistant YAML
+- lack of a safe user-interrupt path for running recorded scripts
+- possible `pynput` packaging regression by hardening build checks and tray spec
 
 ---
 
