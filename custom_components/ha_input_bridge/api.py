@@ -24,6 +24,14 @@ class BridgeApiError(HAInputBridgeError):
     """Raised when the bridge returns an unexpected error."""
 
 
+class PlaybackCancelled(BridgeApiError):
+    """Raised when Windows cancelled an active playback session."""
+
+
+class BridgeNotArmed(BridgeApiError):
+    """Raised when the bridge rejects input because it is not armed."""
+
+
 class HAInputBridgeClient:
     """Client for the Windows HA Input Bridge HTTP API."""
 
@@ -75,6 +83,18 @@ class HAInputBridgeClient:
                     if response.status == 403:
                         raise InvalidAuth("Invalid HA Input Bridge token")
 
+                    if response.status == 409:
+                        text = await response.text()
+                        raise PlaybackCancelled(
+                            f"HA Input Bridge playback was cancelled: {text}"
+                        )
+
+                    if response.status == 423:
+                        text = await response.text()
+                        raise BridgeNotArmed(
+                            f"HA Input Bridge is not armed: {text}"
+                        )
+
                     if response.status >= 400:
                         text = await response.text()
                         raise BridgeApiError(
@@ -84,6 +104,10 @@ class HAInputBridgeClient:
                     data = await response.json(content_type=None)
 
         except InvalidAuth:
+            raise
+        except PlaybackCancelled:
+            raise
+        except BridgeNotArmed:
             raise
         except BridgeApiError:
             raise
@@ -103,15 +127,38 @@ class HAInputBridgeClient:
         """Get current mouse position and screen size."""
         return await self._request("GET", "/position")
 
-    async def arm(self, seconds: int = 30) -> dict[str, Any]:
+    async def state(self) -> dict[str, Any]:
+        """Get current bridge playback state."""
+        return await self._request("GET", "/state")
+
+    async def cancel(self) -> dict[str, Any]:
+        """Cancel active playback and release mouse buttons."""
+        return await self._request("POST", "/cancel")
+
+    async def arm(
+        self,
+        seconds: int = 30,
+        cancel_on_manual_mouse: bool | None = None,
+        manual_mouse_cancel_threshold_px: int | None = None,
+        manual_mouse_grace_ms: int | None = None,
+    ) -> dict[str, Any]:
         """Arm the bridge temporarily."""
-        return await self._request(
-            "POST",
-            "/arm",
-            {
-                "seconds": int(seconds),
-            },
-        )
+        payload: dict[str, Any] = {
+            "seconds": int(seconds),
+        }
+
+        if cancel_on_manual_mouse is not None:
+            payload["cancel_on_manual_mouse"] = bool(cancel_on_manual_mouse)
+
+        if manual_mouse_cancel_threshold_px is not None:
+            payload["manual_mouse_cancel_threshold_px"] = int(
+                manual_mouse_cancel_threshold_px
+            )
+
+        if manual_mouse_grace_ms is not None:
+            payload["manual_mouse_grace_ms"] = int(manual_mouse_grace_ms)
+
+        return await self._request("POST", "/arm", payload)
 
     async def input(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Send a raw input payload."""
